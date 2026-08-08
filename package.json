@@ -1,0 +1,10 @@
+{
+  "name": "omnigpt-userscript",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "npm run build && node --check OmniGPT.user.js && node --test"
+  }
+}

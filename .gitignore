@@ -1,0 +1,5 @@
+node_modules/
+*.log
+
+# Superseded reference script; kept locally for provenance only.
+ChatGPT-TeX-Copy-Quote-fixed-2026.txt
