@@ -1,8 +1,10 @@
 // ==UserScript==
-// @name         OmniGPT
+// @name         OmniGPT - ChatGPT Export & LaTeX Copy
+// @name:zh-CN   OmniGPT - ChatGPT 对话导出与 LaTeX 复制
 // @namespace    https://github.com/sakur7a/OmniGPT
 // @version      0.1.0
-// @description  导出 ChatGPT 对话，并在复制或引用时保留原始 LaTeX 公式。
+// @description  Export ChatGPT conversations and preserve original LaTeX when copying or quoting formulas.
+// @description:zh-CN 导出 ChatGPT 对话，并在复制或引用时保留原始 LaTeX 公式。
 // @author       OmniGPT contributors
 // @license      GPL-3.0-or-later
 // @homepageURL  https://github.com/sakur7a/OmniGPT

@@ -23,7 +23,8 @@ function loadExporter() {
 
 test("generated userscript has installable metadata", () => {
   assert.match(userscriptSource, /^\/\/ ==UserScript==/);
-  assert.match(userscriptSource, /\/\/ @name\s+OmniGPT/);
+  assert.match(userscriptSource, /\/\/ @name\s+OmniGPT - ChatGPT Export & LaTeX Copy/);
+  assert.match(userscriptSource, /\/\/ @name:zh-CN\s+OmniGPT - ChatGPT 对话导出与 LaTeX 复制/);
   assert.match(userscriptSource, /\/\/ @grant\s+none/);
   assert.match(userscriptSource, /https:\/\/chatgpt\.com\/\*/);
 });
