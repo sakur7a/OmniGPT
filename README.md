@@ -1,6 +1,8 @@
 # OmniGPT
 
-[直接安装 OmniGPT](https://raw.githubusercontent.com/sakur7a/OmniGPT/main/OmniGPT.user.js)
+[通过 Greasy Fork 安装（推荐）](https://greasyfork.org/zh-CN/scripts/590463-omnigpt-chatgpt-export-latex-copy)
+
+[通过 GitHub Raw 安装（备用）](https://raw.githubusercontent.com/sakur7a/OmniGPT/main/OmniGPT.user.js)
 
 OmniGPT 是一个可直接导入 Tampermonkey（油猴）的 ChatGPT userscript，当前聚焦两件事：
 
@@ -10,7 +12,7 @@ OmniGPT 是一个可直接导入 Tampermonkey（油猴）的 ChatGPT userscript�
 ## 安装
 
 1. 安装 Tampermonkey。
-2. 点击上方“直接安装 OmniGPT”，或打开仓库中的 `OmniGPT.user.js` 后点击 **Raw**。
+2. 点击上方 Greasy Fork 安装链接，再点击页面中的“安装此脚本”。也可以使用 GitHub Raw 备用链接。
 3. Tampermonkey 会打开安装页，确认安装即可。
 4. 刷新 `https://chatgpt.com/`，页面右下角会出现 **OmniGPT** 按钮。
 
