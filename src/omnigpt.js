@@ -270,7 +270,10 @@
     style.textContent = `
       #${ROOT_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483000;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#e7e7e7}
       #${ROOT_ID} *{box-sizing:border-box}
-      .omnigpt-launcher{border:1px solid rgba(255,255,255,.16);border-radius:999px;background:#111;color:#fff;padding:10px 16px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.25);cursor:pointer}
+      .omnigpt-launcher{display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid rgba(255,255,255,.16);border-radius:999px;background:#111;color:#fff;padding:10px 16px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.25);cursor:pointer;transition:background-color .16s,border-color .16s,transform .16s}
+      .omnigpt-launcher:hover{background:#1b1b1b;border-color:rgba(255,255,255,.28)}
+      .omnigpt-launcher:focus-visible{outline:2px solid #8ee3ad;outline-offset:3px}
+      .omnigpt-mark{display:none;font-size:15px;font-weight:800;line-height:1}
       .omnigpt-panel{position:absolute;right:0;bottom:48px;width:280px;padding:14px;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:rgba(20,20,20,.96);box-shadow:0 18px 50px rgba(0,0,0,.34);backdrop-filter:blur(16px)}
       .omnigpt-panel[hidden]{display:none}
       .omnigpt-title{font-size:15px;font-weight:750;margin:0 0 2px}
@@ -284,6 +287,15 @@
       .omnigpt-status[data-error="true"]{color:#ff9b9b}
       .omnigpt-toast{position:fixed;left:50%;bottom:10%;z-index:2147483647;transform:translateX(-50%);padding:9px 15px;border-radius:999px;background:rgba(15,15,15,.9);color:#fff;font:12px ui-sans-serif,system-ui;transition:opacity .18s}
       .omnigpt-toast-out{opacity:0}
+      @media (max-width:1100px){
+        #${ROOT_ID}{right:10px;top:50%;bottom:auto;transform:translateY(-50%)}
+        .omnigpt-launcher{width:40px;height:40px;padding:0;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+        .omnigpt-mark{display:block}
+        .omnigpt-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+        .omnigpt-panel{right:50px;top:50%;bottom:auto;transform:translateY(-50%);max-height:calc(100vh - 24px);overflow:auto}
+      }
+      @media (max-width:370px){.omnigpt-panel{width:calc(100vw - 70px)}}
+      @media (prefers-reduced-motion:reduce){.omnigpt-launcher{transition:none}}
     `;
     document.head.appendChild(style);
   }
@@ -336,7 +348,10 @@
     const root = document.createElement("div");
     root.id = ROOT_ID;
     root.innerHTML = `
-      <button type="button" class="omnigpt-launcher" aria-expanded="false">OmniGPT</button>
+      <button type="button" class="omnigpt-launcher" aria-label="打开 OmniGPT" aria-expanded="false">
+        <span class="omnigpt-mark" aria-hidden="true">O</span>
+        <span class="omnigpt-label">OmniGPT</span>
+      </button>
       <div class="omnigpt-panel" hidden>
         <div class="omnigpt-title">导出 ChatGPT 对话</div>
         <div class="omnigpt-hint">双击公式可单独复制 LaTeX</div>

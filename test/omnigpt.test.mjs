@@ -55,3 +55,9 @@ test("formula support covers export, clipboard copy, and quote serialization", (
   assert.match(userscriptSource, /addEventListener\("copy"/);
   assert.match(userscriptSource, /function omniGPTSelectionToString\(/);
 });
+
+test("narrow layouts dock the launcher beside the conversation instead of over the composer", () => {
+  assert.match(userscriptSource, /@media \(max-width:1100px\)/);
+  assert.match(userscriptSource, /top:50%;bottom:auto;transform:translateY\(-50%\)/);
+  assert.match(userscriptSource, /class="omnigpt-mark"/);
+});
