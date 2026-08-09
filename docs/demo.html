@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OmniGPT Demo</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0d0d0d;--surface:#181818;--muted:#969696;--line:#2b2b2b;--accent:#8ee3ad}
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:#ececec;font-family:"Segoe UI",system-ui,sans-serif}
+    body{display:grid;grid-template-columns:220px 1fr}
+    aside{padding:22px 14px;border-right:1px solid var(--line);background:#111}
+    .brand{display:flex;align-items:center;gap:10px;padding:0 9px 22px;font-weight:700}
+    .brand-mark{display:grid;place-items:center;width:28px;height:28px;border:1px solid #3a3a3a;border-radius:9px;color:var(--accent)}
+    .new-chat{padding:10px 12px;border:1px solid #303030;border-radius:10px;background:#1a1a1a;font-size:13px}
+    .history{margin-top:24px;color:#777;font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+    .history-item{margin-top:9px;padding:8px;color:#aaa;font-size:12px;text-transform:none;letter-spacing:0}
+    main{position:relative;min-width:0;padding:46px 28px 118px;overflow:hidden}
+    .conversation{max-width:720px;margin:auto}
+    .eyebrow{margin-bottom:28px;color:#777;font:11px ui-monospace,Consolas,monospace;letter-spacing:.1em;text-transform:uppercase}
+    .message{display:grid;grid-template-columns:30px 1fr;gap:13px;margin-bottom:28px}
+    .avatar{display:grid;place-items:center;width:30px;height:30px;border:1px solid #393939;border-radius:50%;font-size:11px;font-weight:700}
+    .avatar.ai{background:#f1f1f1;color:#111}
+    .copy{padding-top:4px;color:#d4d4d4;font-size:14px;line-height:1.7}
+    .copy p{margin:0 0 10px}
+    .formula{display:inline-block;margin:2px 3px;padding:2px 7px;border-radius:6px;background:#1b1b1b;color:#f0f0f0;font-family:Cambria,"Times New Roman",serif}
+    .katex annotation{display:none}
+    .tip{margin-top:12px;padding-left:12px;border-left:2px solid var(--accent);color:#999;font-size:12px}
+    .composer{position:absolute;right:28px;bottom:18px;left:28px;display:flex;align-items:center;max-width:760px;height:64px;margin:auto;padding:0 18px;border:1px solid #383838;border-radius:32px;background:#242424;box-shadow:0 16px 50px rgba(0,0,0,.35);color:#999}
+    .plus{margin-right:16px;color:#eee;font-size:22px}
+    .send{display:grid;place-items:center;width:34px;height:34px;margin-left:auto;border-radius:50%;background:#eee;color:#111;font-size:15px}
+    @media(max-width:900px){body{display:block}aside{display:none}main{height:100%;padding-top:34px}.conversation{max-width:590px}.composer{right:26px;left:26px}}
+  </style>
+</head>
+<body>
+  <aside>
+    <div class="brand"><span class="brand-mark">O</span> OmniGPT demo</div>
+    <div class="new-chat">＋　新聊天</div>
+    <div class="history">最近对话<div class="history-item">导出与公式复制测试</div><div class="history-item">Project knowledge 整理</div></div>
+  </aside>
+  <main>
+    <div class="conversation">
+      <div class="eyebrow">ChatGPT · conversation preview</div>
+      <div class="message">
+        <div class="avatar">你</div>
+        <div class="copy">请给出质能方程，并保留可复制的 LaTeX。</div>
+      </div>
+      <div class="message">
+        <div class="avatar ai">AI</div>
+        <div class="copy">
+          <p>爱因斯坦的质能方程为 <span data-math-source="E = mc^2"><span class="katex" aria-label="E = mc^2">E = mc²<annotation encoding="application/x-tex">E = mc^2</annotation></span></span>。</p>
+          <p>OmniGPT 会在复制选区、双击公式或引用回复时恢复原始 TeX。</p>
+          <div class="tip">复制结果：<code>$E = mc^2$</code></div>
+        </div>
+      </div>
+    </div>
+    <div class="composer"><span class="plus">＋</span>询问 ChatGPT <span class="send">↑</span></div>
+  </main>
+  <script src="../OmniGPT.user.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      if (new URLSearchParams(location.search).has("panel")) {
+        setTimeout(() => document.querySelector(".omnigpt-launcher")?.click(), 80);
+      }
+    });
+  </script>
+</body>
+</html>
