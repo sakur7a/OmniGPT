@@ -15,9 +15,9 @@
 
 <br><br>
 
-<a href="https://greasyfork.org/zh-CN/scripts/590463-omnigpt-chatgpt-export-latex-copy"><img alt="Greasy Fork version" src="https://img.shields.io/greasyfork/v/590463?style=flat-square&label=version"></a>
-<a href="https://greasyfork.org/zh-CN/scripts/590463-omnigpt-chatgpt-export-latex-copy"><img alt="Greasy Fork installs" src="https://img.shields.io/greasyfork/dt/590463?style=flat-square&label=installs"></a>
-<a href="LICENSE"><img alt="GPL-3.0-or-later" src="https://img.shields.io/github/license/sakur7a/OmniGPT?style=flat-square"></a>
+<a href="https://github.com/sakur7a/OmniGPT/blob/main/package.json"><img alt="OmniGPT version" src="https://img.shields.io/github/package-json/v/sakur7a/OmniGPT?style=flat-square&label=version&color=8ee3ad"></a>
+<a href="https://greasyfork.org/zh-CN/scripts/590463-omnigpt-chatgpt-export-latex-copy"><img alt="Available on Greasy Fork" src="https://img.shields.io/badge/distribution-Greasy_Fork-8ee3ad?style=flat-square"></a>
+<a href="LICENSE"><img alt="GPL-3.0-or-later" src="https://img.shields.io/github/license/sakur7a/OmniGPT?style=flat-square&color=8ee3ad"></a>
 <img alt="No telemetry" src="https://img.shields.io/badge/telemetry-none-8ee3ad?style=flat-square">
 
 </div>
