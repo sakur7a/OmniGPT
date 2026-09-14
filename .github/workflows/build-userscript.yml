@@ -1,0 +1,45 @@
+name: Build userscript
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "scripts/build.mjs"
+      - "package.json"
+      - "test/**"
+      - ".github/workflows/build-userscript.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/build.mjs"
+      - "package.json"
+      - "test/**"
+      - ".github/workflows/build-userscript.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build and test
+        run: npm run check
+      - name: Keep generated userscript in sync
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          if git diff --quiet -- OmniGPT.user.js; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add OmniGPT.user.js
+          git commit -m "Build OmniGPT userscript"
+          git push
