@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "npm run build && node --check OmniGPT.user.js && node --test"
+    "verify:release": "node scripts/verify-release.mjs",
+    "check": "npm run build && npm run verify:release && node --check OmniGPT.user.js && node --test"
   }
 }
