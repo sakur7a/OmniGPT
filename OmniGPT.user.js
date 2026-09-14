@@ -2,9 +2,9 @@
 // @name         OmniGPT - ChatGPT Export & LaTeX Copy
 // @name:zh-CN   OmniGPT - ChatGPT 对话导出与 LaTeX 复制
 // @namespace    https://github.com/sakur7a/OmniGPT
-// @version      0.2.0
-// @description  Export ChatGPT conversations and preserve original LaTeX when copying or quoting formulas.
-// @description:zh-CN 导出 ChatGPT 对话，并在复制或引用时保留原始 LaTeX 公式。
+// @version      0.2.1
+// @description  Export conversations and copy LaTeX as portable plain-text Markdown. Optional quote compatibility.
+// @description:zh-CN 导出对话，复制为保留 LaTeX 的纯文本 Markdown；可选引用兼容。
 // @author       OmniGPT contributors
 // @license      GPL-3.0-or-later
 // @homepageURL  https://github.com/sakur7a/OmniGPT
@@ -14,8 +14,335 @@
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @run-at       document-start
+// @noframes
 // @grant        none
 // ==/UserScript==
+
+(function initClipboard(global) {
+  "use strict";
+  if (global.OmniGPTClipboard) return;
+
+  const MATH = ".katex-display, .katex, mjx-container, .MathJax, math, [data-math-source], [data-latex], [data-tex], [data-original-tex]";
+  const SOURCE_ATTRS = ["data-math-source", "data-latex", "data-tex", "data-original-tex", "alttext"];
+  const TEX_ANNOTATION = 'annotation[encoding="application/x-tex"], annotation[encoding="application/x-latex"]';
+  const MESSAGE = '[data-message-author-role], section[data-turn], [data-testid^="conversation-turn-"], main article, main .markdown';
+  const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
+  const SKIP = 'button, nav, aside, footer, style, noscript, svg, mjx-assistive-mml, annotation, annotation-xml, [hidden], [aria-hidden="true"], .sr-only, #omnigpt-root';
+  const BLOCK = new Set(["P", "DIV", "SECTION", "ARTICLE", "MAIN", "FIGURE", "FIGCAPTION", "DL", "DT", "DD"]);
+  const QUOTE_KEY = "omnigpt.quote-compat";
+  let quoteEnabled = false;
+  let quotePatches = [];
+  let installed = false;
+  let copyFallbackActive = false;
+
+  const elementOf = (node) => node?.nodeType === 1 ? node : node?.parentElement;
+  function unwrapTex(source) {
+    const value = String(source || "").trim();
+    for (const [left, right] of [["$$", "$$"], ["\\[", "\\]"], ["\\(", "\\)"], ["$", "$"]]) {
+      if (value.startsWith(left) && value.endsWith(right) && value.length >= left.length + right.length) {
+        return value.slice(left.length, -right.length).trim();
+      }
+    }
+    return value;
+  }
+
+  // Follow ancestors, not a document-wide selector. A formula is an atomic selection unit.
+  function formulaRoot(node) {
+    let root = null;
+    let element = elementOf(node);
+    if (element?.closest("pre, code, " + EDITABLE)) return null;
+    for (; element; element = element.parentElement) {
+      if (element.matches(MESSAGE)) break;
+      if (element.matches(MATH)) root = element;
+    }
+    return root;
+  }
+
+  function readFormula(node) {
+    let source = "";
+    for (const attr of SOURCE_ATTRS) {
+      source = node.getAttribute(attr) || "";
+      if (source.trim()) break;
+    }
+    if (!source.trim()) source = node.querySelector(TEX_ANNOTATION)?.textContent || "";
+    if (!source.trim()) {
+      const carrier = node.querySelector("[data-math-source], [data-latex], [data-tex], [data-original-tex], math[alttext]");
+      if (carrier) for (const attr of SOURCE_ATTRS) {
+        source = carrier.getAttribute(attr) || "";
+        if (source.trim()) break;
+      }
+    }
+    let display = Boolean(node.closest('.katex-display, .MathJax_Display, [data-math-display="true"], .math-display, mjx-container[display="true"], math[display="block"]') ||
+      node.querySelector('mjx-container[display="true"], math[display="block"]'));
+    if (!source.trim() && node.matches("mjx-container, .MathJax")) {
+      // Only consult a renderer already present on the page; never load one or send a request.
+      try {
+        const item = global.MathJax?.startup?.document?.getMathItemsWithin?.([node])?.[0];
+        if (typeof item?.math === "string") { source = item.math; display = Boolean(item.display); }
+        const legacy = global.MathJax?.Hub?.getJaxFor?.(node);
+        if (!source && typeof legacy?.originalText === "string") source = legacy.originalText;
+      } catch (_) { /* Renderer internals are optional. */ }
+      const sibling = node.nextElementSibling;
+      if (!source && sibling?.matches('script[type^="math/tex"]')) {
+        source = sibling.textContent || "";
+        display = display || /mode\s*=\s*display/i.test(sibling.type);
+      }
+    }
+    display = display || /^(?:\$\$|\\\[)/.test(source.trim());
+    // Spoken aria-labels and arbitrary annotations are NOT LaTeX.
+    return { tex: unwrapTex(source), display };
+  }
+
+  function eligibleRange(range) {
+    if (!range || range.collapsed) return false;
+    const start = elementOf(range.startContainer);
+    const end = elementOf(range.endContainer);
+    return Boolean(start?.closest(MESSAGE) && end?.closest(MESSAGE) &&
+      !start.closest(EDITABLE + ", #omnigpt-root, nav, aside") && !end.closest(EDITABLE + ", #omnigpt-root, nav, aside"));
+  }
+
+  function escapeProse(text) {
+    return text.replace(/\u00a0/g, " ").replace(/\u200b/g, "").replace(/[\t\n\r ]+/g, " ")
+      .replace(/([\\`*_\[\]])/g, "\\$1");
+  }
+
+  function serializeRange(range) {
+    if (!eligibleRange(range)) return null;
+    const tokens = [];
+    // A fresh marker prevents selected literal text from being mistaken for a protected token.
+    const prefix = `\uE000omnigpt-${Math.random().toString(36).slice(2)}-`;
+    const protect = (value) => { tokens.push(value); return `${prefix}${tokens.length - 1}\uE001`; };
+    let mathCount = 0;
+    let visitedNodes = 0;
+    let codeDepth = 0;
+    const listPositions = new WeakMap();
+    const rawText = (node) => {
+      let text = node.nodeValue || "";
+      const end = node === range.endContainer ? range.endOffset : text.length;
+      const start = node === range.startContainer ? range.startOffset : 0;
+      return text.slice(start, end);
+    };
+    const intersects = (node) => { try { return range.intersectsNode(node); } catch (_) { return false; } };
+    const clean = (text) => text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    const children = (node) => {
+      // Range boundary offsets let a selection in <main> skip unrelated sibling turns entirely.
+      let first = node.firstChild;
+      let lastExclusive = null;
+      if (node === range.startContainer) first = node.childNodes[range.startOffset] || null;
+      else if (node.contains(range.startContainer)) {
+        let child = range.startContainer;
+        while (child.parentNode !== node && child.parentNode) child = child.parentNode;
+        if (child.parentNode === node) first = child;
+      }
+      if (node === range.endContainer) lastExclusive = node.childNodes[range.endOffset] || null;
+      else if (node.contains(range.endContainer)) {
+        let child = range.endContainer;
+        while (child.parentNode !== node && child.parentNode) child = child.parentNode;
+        if (child.parentNode === node) lastExclusive = child.nextSibling;
+      }
+      let result = "";
+      for (let child = first; child && child !== lastExclusive; child = child.nextSibling) result += render(child);
+      return result;
+    };
+    const render = (node) => {
+      if (!intersects(node)) return "";
+      visitedNodes += 1;
+      if (node.nodeType === 3) return codeDepth ? rawText(node) : escapeProse(rawText(node));
+      if (node.nodeType !== 1) return "";
+      const tag = node.tagName.toUpperCase();
+      if (!codeDepth && node.matches(MATH)) {
+        const formula = readFormula(node);
+        if (formula.tex) {
+          mathCount += 1;
+          const text = formula.display ? `$$\n${formula.tex}\n$$` : `$${formula.tex}$`;
+          return formula.display ? `\n\n${protect(text)}\n\n` : protect(text);
+        }
+      }
+      if (node.matches(SKIP + ", " + EDITABLE) || tag === "SCRIPT") return "";
+      if (tag === "BR") return "\n";
+      if (tag === "HR") return "\n\n---\n\n";
+      if (tag === "PRE" || tag === "CODE") {
+        if (codeDepth) return children(node);
+        codeDepth += 1;
+        const content = children(node);
+        codeDepth -= 1;
+        const longest = Math.max(0, ...(content.match(/`+/g) || []).map((run) => run.length));
+        const fence = "`".repeat(Math.max(tag === "PRE" ? 3 : 1, longest + 1));
+        const language = `${node.className || ""} ${node.querySelector("code")?.className || ""}`.match(/\blanguage-([\w+-]+)/)?.[1] || "";
+        return tag === "PRE" ? `\n\n${protect(`${fence}${language}\n${content.replace(/\n$/, "")}\n${fence}`)}\n\n` : protect(`${fence}${/^`|`$|^ | $/.test(content) ? " " : ""}${content}${/^`|`$|^ | $/.test(content) ? " " : ""}${fence}`);
+      }
+      let value = children(node);
+      if (codeDepth) return value;
+      if (!value) return "";
+      if (/^H[1-6]$/.test(tag)) return `\n\n${"#".repeat(Number(tag[1]))} ${value.trim()}\n\n`;
+      if (tag === "STRONG" || tag === "B") return `**${value}**`;
+      if (tag === "EM" || tag === "I") return `*${value}*`;
+      if (tag === "DEL" || tag === "S") return `~~${value}~~`;
+      if (tag === "A") {
+        const href = node.getAttribute("href") || "";
+        return /^(?:https?:\/\/|\/|#|mailto:)/i.test(href) ? `[${value}](${href.replace(/\)/g, "%29")})` : value;
+      }
+      if (tag === "BLOCKQUOTE") return `\n\n${clean(value).split("\n").map((line) => `> ${line}`).join("\n")}\n\n`;
+      if (tag === "LI") {
+        const parent = node.parentElement;
+        let marker = "- ";
+        if (parent?.tagName === "OL") {
+          if (!listPositions.has(parent)) {
+            let number = Number(parent.getAttribute("start")) || 1;
+            const positions = new WeakMap();
+            for (const item of parent.children) {
+              if (item.tagName !== "LI") continue;
+              if (item.hasAttribute("value")) number = Number(item.getAttribute("value"));
+              positions.set(item, number++);
+            }
+            listPositions.set(parent, positions);
+          }
+          marker = `${listPositions.get(parent).get(node)}. `;
+        }
+        return `\n${marker}${value.trim().replace(/\n/g, "\n  ")}\n`;
+      }
+      if (tag === "UL" || tag === "OL") return `\n\n${value.trim()}\n\n`;
+      if (tag === "TD" || tag === "TH") return ` ${value.trim().replace(/\|/g, "\\|")} |`;
+      if (tag === "TR") return `\n|${value}\n`;
+      if (tag === "TABLE") {
+        const lines = value.trim().split(/\n+/);
+        if (lines.length) lines.splice(1, 0, `|${" --- |".repeat(node.querySelector("tr")?.children.length || 1)}`);
+        return `\n\n${lines.join("\n")}\n\n`;
+      }
+      return BLOCK.has(tag) ? `\n\n${value.trim()}\n\n` : value;
+    };
+    // Expanding only the intersected formula preserves its TeX even when selection starts inside a glyph.
+    const root = formulaRoot(range.commonAncestorContainer) || range.commonAncestorContainer;
+    let text = clean(render(root));
+    const tokenPattern = new RegExp(`${prefix}(\\d+)\uE001`, "g");
+    text = text.replace(tokenPattern, (_, index, offset) => {
+      const before = text.slice(text.lastIndexOf("\n", offset - 1) + 1, offset);
+      const indent = /^(?:[ \t]|> ?)*(?:(?:[-+*]|\d+\.) )?$/.test(before)
+        ? before.replace(/(?:[-+*]|\d+\.) $/, (marker) => " ".repeat(marker.length)) : "";
+      return tokens[Number(index)].replace(/\n/g, `\n${indent}`);
+    });
+    return { text, mathCount, visitedNodes };
+  }
+
+  function selectionPayload(selection) {
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+    const parts = [];
+    let mathCount = 0;
+    let visitedNodes = 0;
+    for (let i = 0; i < selection.rangeCount; i += 1) {
+      const part = serializeRange(selection.getRangeAt(i));
+      if (!part) return null;
+      parts.push(part.text);
+      mathCount += part.mathCount;
+      visitedNodes += part.visitedNodes;
+    }
+    return { text: parts.join("\n\n"), mathCount, visitedNodes };
+  }
+
+  function handleCopy(event) {
+    if (copyFallbackActive || !event.clipboardData || elementOf(event.target)?.closest(EDITABLE)) return;
+    try {
+      const payload = selectionPayload(global.getSelection());
+      if (!payload?.mathCount || !payload.text) return; // Leave ordinary copy completely native.
+      event.clipboardData.clearData();
+      event.clipboardData.setData("text/plain", payload.text);
+      event.preventDefault();
+      // preventDefault alone does not prevent later page handlers from adding KaTeX HTML.
+      event.stopImmediatePropagation();
+    } catch (_) { /* On unexpected DOM changes leave native copy available. */ }
+  }
+
+  async function writeText(text) {
+    if (global.navigator.clipboard?.writeText) {
+      try { await global.navigator.clipboard.writeText(text); return; } catch (_) { /* Try a user-gesture fallback. */ }
+    }
+    const doc = global.document;
+    const active = doc.activeElement;
+    const selection = global.getSelection();
+    const ranges = selection ? Array.from({ length: selection.rangeCount }, (_, i) => selection.getRangeAt(i).cloneRange()) : [];
+    const textarea = doc.createElement("textarea");
+    textarea.value = text;
+    textarea.readOnly = true;
+    textarea.style.cssText = "position:fixed;left:-9999px;top:0";
+    const onCopy = (event) => {
+      event.clipboardData.clearData();
+      event.clipboardData.setData("text/plain", text);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    try {
+      copyFallbackActive = true;
+      doc.body.appendChild(textarea);
+      textarea.select();
+      global.addEventListener("copy", onCopy, true);
+      if (!doc.execCommand("copy")) throw new Error("Clipboard write was denied.");
+    } finally {
+      global.removeEventListener("copy", onCopy, true);
+      textarea.remove();
+      active?.focus?.({ preventScroll: true });
+      if (selection) { selection.removeAllRanges(); ranges.forEach((range) => selection.addRange(range)); }
+      copyFallbackActive = false;
+    }
+  }
+
+  function setQuoteCompatibility(enabled, persist = true) {
+    if (Boolean(enabled) === quoteEnabled) return;
+    if (enabled) {
+      for (const [prototype, isSelection] of [[global.Range?.prototype, false], [global.Selection?.prototype, true]]) {
+        if (!prototype) continue;
+        const native = prototype.toString;
+        const wrapper = isSelection ? function omniGPTSelectionToString() {
+          const value = selectionPayload(this);
+          return value?.mathCount ? value.text : native.call(this);
+        } : function omniGPTRangeToString() {
+          const value = serializeRange(this);
+          return value?.mathCount ? value.text : native.call(this);
+        };
+        // cloneContents is deliberately never patched, even in compatibility mode.
+        const safeWrapper = function () {
+          try { return wrapper.call(this); } catch (_) { return native.call(this); }
+        };
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, "toString");
+        try {
+          prototype.toString = safeWrapper;
+          quotePatches.push({ prototype, descriptor, wrapper: safeWrapper });
+        } catch (_) { /* Some managers isolate or lock prototypes. */ }
+      }
+      quoteEnabled = quotePatches.length > 0;
+    } else {
+      for (const patch of quotePatches) if (patch.prototype.toString === patch.wrapper) {
+        if (patch.descriptor) Object.defineProperty(patch.prototype, "toString", patch.descriptor);
+        else delete patch.prototype.toString;
+      }
+      quotePatches = [];
+      quoteEnabled = false;
+    }
+    if (persist) try { global.localStorage.setItem(QUOTE_KEY, String(quoteEnabled)); } catch (_) { /* Private browsing. */ }
+  }
+
+  function install(onCopied = () => {}) {
+    if (installed) return;
+    installed = true;
+    // Install at document-start, ahead of ordinary page handlers. No polling, observer or initial math scan.
+    global.addEventListener("copy", handleCopy, true);
+    global.addEventListener("dblclick", (event) => {
+      const target = elementOf(event.target);
+      if (!target?.closest(MESSAGE) || target.closest(EDITABLE)) return;
+      const root = formulaRoot(target);
+      if (!root) return;
+      const { tex, display } = readFormula(root);
+      if (!tex) return;
+      event.preventDefault();
+      writeText(display ? `$$\n${tex}\n$$` : `$${tex}$`)
+        .then(() => onCopied("LaTeX 公式已复制"))
+        .catch(() => onCopied("复制失败，请检查剪贴板权限"));
+    });
+    try { if (global.localStorage.getItem(QUOTE_KEY) === "true") setQuoteCompatibility(true, false); } catch (_) { /* Storage optional. */ }
+  }
+
+  global.OmniGPTClipboard = Object.freeze({ install, handleCopy, selectionPayload, serializeRange, readFormula, unwrapTex, writeText,
+    setQuoteCompatibility, get quoteCompatibility() { return quoteEnabled; } });
+})(globalThis);
 
 (function initExporter(global) {
   "use strict";
@@ -797,209 +1124,46 @@
 
 (function initOmniGPT(global) {
   "use strict";
-
-  if (global.__omniGPTInjected) return;
+  if (global.__omniGPTInjected || !global.OmniGPTClipboard) return;
   global.__omniGPTInjected = true;
 
   const ROOT_ID = "omnigpt-root";
-  const PATCH_KEY = Symbol.for("omnigpt.math-copy.patched");
-  const MATH_SELECTOR = ".katex, mjx-container, math, [data-math-source], [data-latex], [data-tex], [data-original-tex]";
+  const clipboard = global.OmniGPTClipboard;
   let statusTimer = null;
-
-  function unwrapMathDelimiters(source) {
-    let value = String(source || "").trim().replace(/^latex\s*:\s*/i, "");
-    if ((value.startsWith("$$") && value.endsWith("$$")) || (value.startsWith("\\[") && value.endsWith("\\]"))) {
-      value = value.slice(2, -2);
-    } else if ((value.startsWith("$") && value.endsWith("$")) || (value.startsWith("\\(") && value.endsWith("\\)"))) {
-      value = value.slice(1, -1);
-    }
-    return value.trim();
-  }
-
-  function asFormulaRoot(element) {
-    if (!(element instanceof Element)) return null;
-    let root = element.matches(MATH_SELECTOR) ? element : element.closest(MATH_SELECTOR);
-    if (!root) return null;
-    while (root.parentElement?.matches?.(MATH_SELECTOR)) root = root.parentElement;
-    return root;
-  }
-
-  function formulaCandidates(root) {
-    if (!root) return [];
-    const raw = [];
-    if (root instanceof Element && root.matches(MATH_SELECTOR)) raw.push(root);
-    root.querySelectorAll?.(MATH_SELECTOR).forEach((element) => raw.push(element));
-    const unique = [...new Set(raw.map(asFormulaRoot).filter(Boolean))];
-    return unique.filter((candidate) => !unique.some((other) => other !== candidate && other.contains(candidate)));
-  }
-
-  function findRawTex(element) {
-    const root = asFormulaRoot(element) || element;
-    if (!(root instanceof Element)) return "";
-    const annotation = root.querySelector('annotation[encoding="application/x-tex"], annotation');
-    if (annotation?.textContent?.trim()) return unwrapMathDelimiters(annotation.textContent);
-    let candidate = root;
-    for (let depth = 0; candidate && depth < 7; depth += 1, candidate = candidate.parentElement) {
-      for (const attr of ["data-omnigpt-tex", "data-math-source", "data-latex", "data-tex", "data-original-tex", "alttext"]) {
-        const value = candidate.getAttribute(attr);
-        if (value?.trim()) return unwrapMathDelimiters(value);
-      }
-    }
-    if (root.matches(".katex, math")) {
-      const aria = root.getAttribute("aria-label");
-      if (aria?.trim()) return unwrapMathDelimiters(aria);
-    }
-    return "";
-  }
-
-  function isDisplayMath(element) {
-    const root = asFormulaRoot(element) || element;
-    const cached = root?.getAttribute?.("data-omnigpt-display");
-    if (cached === "1" || cached === "0") return cached === "1";
-    return Boolean(
-      root?.closest?.(".katex-display") ||
-      root?.matches?.("mjx-container[display='true'], math[display='block']") ||
-      root?.closest?.("[data-math-display='true'], .math-display")
-    );
-  }
-
-  function formatTex(element) {
-    const source = findRawTex(element);
-    if (!source) return "";
-    return isDisplayMath(element) ? `\n$$\n${source}\n$$\n` : `$${source}$`;
-  }
-
-  function cacheFormula(element) {
-    const root = asFormulaRoot(element);
-    if (!root || root.hasAttribute("data-omnigpt-tex")) return;
-    const source = findRawTex(root);
-    if (!source) return;
-    root.setAttribute("data-omnigpt-tex", source);
-    root.setAttribute("data-omnigpt-display", isDisplayMath(root) ? "1" : "0");
-  }
-
-  function cacheFormulas(root) { formulaCandidates(root).forEach(cacheFormula); }
-
-  function transformMath(fragment) {
-    if (!fragment?.querySelectorAll) return { fragment, changed: false };
-    let changed = false;
-    formulaCandidates(fragment).forEach((element) => {
-      const tex = formatTex(element);
-      if (!tex || !element.parentNode) return;
-      element.replaceWith(fragment.ownerDocument.createTextNode(tex));
-      changed = true;
-    });
-    return { fragment, changed };
-  }
-
-  function rangeContainsFormula(range) {
-    const ancestor = range.commonAncestorContainer;
-    const root = ancestor.nodeType === 1 ? ancestor : ancestor.parentElement;
-    if (!root) return false;
-    return formulaCandidates(root).some((element) => {
-      try { return range.intersectsNode(element) && Boolean(findRawTex(element)); }
-      catch (_) { return false; }
-    });
-  }
-
-  function patchSelectionSerialization() {
-    const rangePrototype = global.Range?.prototype;
-    if (!rangePrototype || rangePrototype[PATCH_KEY]) return;
-    const nativeCloneContents = rangePrototype.cloneContents;
-    const nativeToString = rangePrototype.toString;
-    rangePrototype.cloneContents = function omniGPTCloneContents() {
-      const fragment = nativeCloneContents.call(this);
-      try { return transformMath(fragment).fragment; }
-      catch (error) { console.warn("[OmniGPT] Unable to serialize a formula selection.", error); return fragment; }
-    };
-    rangePrototype.toString = function omniGPTRangeToString() {
-      try {
-        const result = transformMath(nativeCloneContents.call(this));
-        if (result.changed) return result.fragment.textContent || "";
-      } catch (error) { console.warn("[OmniGPT] Unable to convert a formula selection to text.", error); }
-      return nativeToString.call(this);
-    };
-    Object.defineProperty(rangePrototype, PATCH_KEY, { value: true });
-
-    const selectionPrototype = global.Selection?.prototype;
-    if (selectionPrototype && !selectionPrototype[PATCH_KEY]) {
-      const nativeSelectionToString = selectionPrototype.toString;
-      selectionPrototype.toString = function omniGPTSelectionToString() {
-        try {
-          const ranges = Array.from({ length: this.rangeCount }, (_, index) => this.getRangeAt(index));
-          if (ranges.some(rangeContainsFormula)) return ranges.map((range) => range.toString()).join("\n");
-        } catch (error) { console.warn("[OmniGPT] Unable to convert the quoted selection.", error); }
-        return nativeSelectionToString.call(this);
-      };
-      Object.defineProperty(selectionPrototype, PATCH_KEY, { value: true });
-    }
-  }
-
-  function selectedTextWithTex(selection) {
-    const parts = [];
-    for (let index = 0; index < selection.rangeCount; index += 1) {
-      parts.push(selection.getRangeAt(index).cloneContents().textContent || "");
-    }
-    return parts.join("\n").replace(/\u200b/g, "");
-  }
-
-  async function writeClipboard(text) {
-    if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.readOnly = true;
-    textarea.style.cssText = "position:fixed;left:-9999px;top:0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
+  let statusNode = null;
 
   function showToast(message) {
-    const toast = document.createElement("div");
-    toast.className = "omnigpt-toast";
-    toast.textContent = message;
+    if (!document.body) return;
+    const toast = element("div", "omnigpt-toast", message);
     document.body.appendChild(toast);
-    global.setTimeout(() => {
-      toast.classList.add("omnigpt-toast-out");
-      global.setTimeout(() => toast.remove(), 180);
-    }, 1100);
+    global.setTimeout(() => toast.remove(), 1400);
   }
 
-  function setupMathCopy() {
-    cacheFormulas(document);
-    const observer = new MutationObserver((mutations) => mutations.forEach((mutation) => mutation.addedNodes.forEach((node) => {
-      if (node.nodeType === 1) cacheFormulas(node);
-    })));
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    document.addEventListener("copy", (event) => {
-      const selection = global.getSelection();
-      if (!selection || selection.isCollapsed || !selection.rangeCount) return;
-      const ranges = Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index));
-      if (!ranges.some(rangeContainsFormula)) return;
-      const text = selectedTextWithTex(selection);
-      if (!text || !event.clipboardData) return;
-      event.preventDefault();
-      event.clipboardData.setData("text/plain", text);
-    }, true);
-
-    document.addEventListener("dblclick", (event) => {
-      const target = event.target instanceof Element ? asFormulaRoot(event.target) : null;
-      const tex = target ? formatTex(target).trim() : "";
-      if (!tex) return;
-      event.preventDefault();
-      writeClipboard(tex).then(() => showToast("LaTeX 公式已复制")).catch(() => showToast("复制失败，请检查剪贴板权限"));
-    });
-  }
+  // Register copy capture before ChatGPT installs its own handlers. No DOM scan occurs here.
+  clipboard.install(showToast);
 
   function injectStyles() {
+    if (document.getElementById("omnigpt-style")) return;
     const style = document.createElement("style");
+    style.id = "omnigpt-style";
     style.textContent = `
       #${ROOT_ID}{position:fixed;right:18px;bottom:18px;z-index:2147483000;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#e7e7e7}
-      #${ROOT_ID} *{box-sizing:border-box}.omnigpt-launcher{display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid rgba(255,255,255,.16);border-radius:999px;background:#111;color:#fff;padding:10px 16px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.25);cursor:pointer;transition:background-color .16s,border-color .16s,transform .16s}.omnigpt-launcher:hover{background:#1b1b1b;border-color:rgba(255,255,255,.28)}.omnigpt-launcher:focus-visible{outline:2px solid #8ee3ad;outline-offset:3px}.omnigpt-mark{display:none;font-size:15px;font-weight:800;line-height:1}.omnigpt-panel{position:absolute;right:0;bottom:48px;width:280px;padding:14px;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:rgba(20,20,20,.96);box-shadow:0 18px 50px rgba(0,0,0,.34);backdrop-filter:blur(16px)}.omnigpt-panel[hidden]{display:none}.omnigpt-title{font-size:15px;font-weight:750;margin:0 0 2px}.omnigpt-hint{font-size:11px;color:#999;margin-bottom:12px}.omnigpt-section{font-size:11px;color:#aaa;margin:12px 0 6px;text-transform:uppercase;letter-spacing:.08em}.omnigpt-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.omnigpt-action{border:1px solid #3a3a3a;border-radius:9px;background:#262626;color:#f3f3f3;padding:8px 7px;font-size:12px;cursor:pointer}.omnigpt-action:hover{background:#343434;border-color:#555}.omnigpt-action:disabled{cursor:wait;opacity:.5}.omnigpt-status{min-height:18px;margin-top:10px;font-size:11px;color:#9bd1a8;line-height:1.35}.omnigpt-status[data-error="true"]{color:#ff9b9b}.omnigpt-toast{position:fixed;left:50%;bottom:10%;z-index:2147483647;transform:translateX(-50%);padding:9px 15px;border-radius:999px;background:rgba(15,15,15,.9);color:#fff;font:12px ui-sans-serif,system-ui;transition:opacity .18s}.omnigpt-toast-out{opacity:0}
-      @media (max-width:1100px){#${ROOT_ID}{right:10px;top:50%;bottom:auto;transform:translateY(-50%)}.omnigpt-launcher{width:40px;height:40px;padding:0;box-shadow:0 8px 24px rgba(0,0,0,.3)}.omnigpt-mark{display:block}.omnigpt-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.omnigpt-panel{right:50px;top:50%;bottom:auto;transform:translateY(-50%);max-height:calc(100vh - 24px);overflow:auto}}
-      @media (max-width:370px){.omnigpt-panel{width:calc(100vw - 70px)}}@media (prefers-reduced-motion:reduce){.omnigpt-launcher{transition:none}}
+      #${ROOT_ID} *{box-sizing:border-box}
+      .omnigpt-launcher{display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid #484848;border-radius:999px;background:#111;color:#fff;padding:10px 16px;font-weight:700;box-shadow:0 10px 30px #0004;cursor:pointer}
+      .omnigpt-launcher:hover{background:#1b1b1b}.omnigpt-launcher:focus-visible{outline:2px solid #8ee3ad;outline-offset:3px}
+      .omnigpt-mark{display:none;font-size:15px;font-weight:800;line-height:1}
+      .omnigpt-panel{position:absolute;right:0;bottom:48px;width:290px;padding:14px;border:1px solid #3a3a3a;border-radius:16px;background:#141414;box-shadow:0 18px 50px #0005}
+      .omnigpt-panel[hidden]{display:none}.omnigpt-title{font-size:15px;font-weight:750;margin:0 0 2px}
+      .omnigpt-hint{font-size:11px;color:#aaa;margin-bottom:12px;line-height:1.5}
+      .omnigpt-section{font-size:11px;color:#aaa;margin:12px 0 6px;text-transform:uppercase;letter-spacing:.08em}
+      .omnigpt-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+      .omnigpt-action{border:1px solid #3a3a3a;border-radius:9px;background:#262626;color:#f3f3f3;padding:8px 7px;font-size:12px;cursor:pointer}
+      .omnigpt-action:hover{background:#343434;border-color:#555}.omnigpt-action:disabled{cursor:wait;opacity:.5}
+      .omnigpt-status{min-height:18px;margin-top:10px;font-size:11px;color:#9bd1a8;line-height:1.5;overflow-wrap:anywhere}
+      .omnigpt-status[data-error="true"]{color:#ff9b9b}.omnigpt-setting{display:flex;align-items:center;gap:8px;font-size:12px;margin-top:12px}
+      .omnigpt-toast{position:fixed;left:50%;bottom:10%;z-index:2147483647;transform:translateX(-50%);padding:9px 15px;border-radius:999px;background:#111;color:#fff;font:12px ui-sans-serif,system-ui}
+      @media (max-width:1100px){#${ROOT_ID}{right:10px;top:50%;bottom:auto;transform:translateY(-50%)}.omnigpt-launcher{width:40px;height:40px;padding:0}.omnigpt-mark{display:block}.omnigpt-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.omnigpt-panel{right:50px;top:50%;bottom:auto;transform:translateY(-50%);max-height:calc(100vh - 24px);overflow:auto}}
+      @media (max-width:370px){.omnigpt-panel{width:calc(100vw - 70px)}}
     `;
     document.head.appendChild(style);
   }
@@ -1028,40 +1192,43 @@
     const mark = element("span", "omnigpt-mark", "O");
     mark.setAttribute("aria-hidden", "true");
     launcher.append(mark, element("span", "omnigpt-label", "OmniGPT"));
-
     const panel = element("div", "omnigpt-panel");
     panel.hidden = true;
-    panel.append(element("div", "omnigpt-title", "导出 ChatGPT 对话"), element("div", "omnigpt-hint", "双击公式可单独复制 LaTeX"));
-
-    panel.appendChild(element("div", "omnigpt-section", "当前对话"));
-    const current = element("div", "omnigpt-grid");
-    current.dataset.current = "";
-    [["Markdown", "markdown"], ["JSON", "json"], ["TXT", "txt"], ["GPT 导入包", "gptbundle"]]
-      .forEach(([label, format]) => current.appendChild(createButton(label, { format, scope: "current" })));
-    current.appendChild(createButton("复制 Markdown", { copy: "markdown" }));
-    panel.appendChild(current);
-
-    panel.appendChild(element("div", "omnigpt-section", "全部对话"));
-    const all = element("div", "omnigpt-grid");
-    all.dataset.all = "";
-    [["Markdown 归档", "markdown"], ["JSON 归档", "json"], ["TXT 归档", "txt"], ["GPT 导入包", "gptbundle"]]
-      .forEach(([label, format]) => all.appendChild(createButton(label, { format, scope: "all" })));
-    panel.appendChild(all);
-
-    const status = element("div", "omnigpt-status");
-    status.setAttribute("aria-live", "polite");
-    panel.appendChild(status);
+    panel.append(element("div", "omnigpt-title", "导出 ChatGPT 对话"), element("div", "omnigpt-hint", "含公式选区复制为纯文本 Markdown；双击复制单个公式。"));
+    for (const scope of ["current", "all"]) {
+      panel.appendChild(element("div", "omnigpt-section", scope === "current" ? "当前对话" : "全部对话"));
+      const grid = element("div", "omnigpt-grid");
+      grid.dataset[scope] = "";
+      [["Markdown", "markdown"], ["JSON", "json"], ["TXT", "txt"], ["GPT 导入包", "gptbundle"]]
+        .forEach(([label, format]) => grid.appendChild(createButton(label, { format, scope })));
+      if (scope === "current") grid.appendChild(createButton("复制 Markdown", { copy: "markdown" }));
+      panel.appendChild(grid);
+    }
+    const setting = element("label", "omnigpt-setting");
+    const checkbox = element("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = clipboard.quoteCompatibility;
+    checkbox.addEventListener("change", () => {
+      clipboard.setQuoteCompatibility(checkbox.checked);
+      checkbox.checked = clipboard.quoteCompatibility;
+      setStatus(checkbox.checked ? "引用兼容已开启；选区转文本时按需处理公式" : "轻量模式：不改写浏览器选区方法");
+    });
+    setting.append(checkbox, document.createTextNode("引用兼容（默认关闭）"));
+    panel.append(setting, element("div", "omnigpt-hint", "仅需要原生选区引用保留 TeX 时开启。框选复制、双击复制无需开启。"));
+    statusNode = element("div", "omnigpt-status");
+    statusNode.setAttribute("aria-live", "polite");
+    panel.appendChild(statusNode);
     root.append(launcher, panel);
     return { root, launcher, panel };
   }
 
   function setStatus(message, isError = false) {
-    const status = document.querySelector(`#${ROOT_ID} .omnigpt-status`);
-    if (!status) return;
-    status.textContent = message;
-    status.dataset.error = isError ? "true" : "false";
+    if (!statusNode) return;
+    statusNode.textContent = message;
+    statusNode.dataset.error = String(isError);
     global.clearTimeout(statusTimer);
-    statusTimer = global.setTimeout(() => { status.textContent = ""; delete status.dataset.error; }, 4000);
+    // Keep errors visible until the next action rather than hiding useful diagnostics after 4 seconds.
+    if (!isError) statusTimer = global.setTimeout(() => { statusNode.textContent = ""; delete statusNode.dataset.error; }, 6000);
   }
 
   function downloadPayload(payload) {
@@ -1078,54 +1245,52 @@
     return global.ChatGPTExporter.getExportPayload(format, document);
   }
 
-  async function runExport(format, scope) {
-    const payload = scope === "all" ? await global.ChatGPTExporter.getArchiveExportPayload(format) : await currentPayload(format);
-    return downloadPayload(payload);
-  }
-
   function setupUi() {
     if (document.getElementById(ROOT_ID) || !global.ChatGPTExporter) return;
     injectStyles();
     const { root, launcher, panel } = createUiTree();
+    const actions = root.querySelectorAll(".omnigpt-action");
     document.body.appendChild(root);
-
     launcher.addEventListener("click", () => {
       panel.hidden = !panel.hidden;
       launcher.setAttribute("aria-expanded", String(!panel.hidden));
     });
-
     root.addEventListener("click", async (event) => {
       const button = event.target.closest?.("button[data-format], button[data-copy]");
-      if (!button) return;
-      root.querySelectorAll(".omnigpt-action").forEach((item) => { item.disabled = true; });
+      if (!button || button.disabled) return;
+      actions.forEach((item) => { item.disabled = true; });
       try {
         if (button.dataset.copy) {
+          setStatus("正在读取当前对话…");
           const payload = await currentPayload("markdown");
-          await writeClipboard(payload.content);
-          setStatus("Markdown 已复制");
+          await clipboard.writeText(payload.content);
+          setStatus("Markdown 已复制（纯文本）");
         } else {
           const isArchive = button.dataset.scope === "all";
           setStatus(isArchive ? "正在读取全部历史对话…" : "正在导出当前对话…");
-          setStatus(`完成：${await runExport(button.dataset.format, button.dataset.scope)}`);
+          const payload = isArchive ? await global.ChatGPTExporter.getArchiveExportPayload(button.dataset.format) : await currentPayload(button.dataset.format);
+          setStatus(`完成：${downloadPayload(payload)}`);
         }
       } catch (error) {
         console.error("[OmniGPT] Export failed.", error);
         setStatus(error?.message || "导出失败", true);
-      } finally {
-        root.querySelectorAll(".omnigpt-action").forEach((item) => { item.disabled = false; });
-      }
+      } finally { actions.forEach((item) => { item.disabled = false; }); }
     });
-
     document.addEventListener("click", (event) => {
-      if (!root.contains(event.target)) {
+      if (!panel.hidden && !root.contains(event.target)) {
         panel.hidden = true;
         launcher.setAttribute("aria-expanded", "false");
       }
     });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !panel.hidden) {
+        panel.hidden = true;
+        launcher.setAttribute("aria-expanded", "false");
+        launcher.focus();
+      }
+    });
   }
 
-  patchSelectionSerialization();
-  function start() { setupMathCopy(); setupUi(); }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
-  else start();
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", setupUi, { once: true });
+  else setupUi();
 })(globalThis);
