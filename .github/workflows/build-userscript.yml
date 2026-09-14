@@ -28,6 +28,7 @@ concurrency:
 jobs:
   check-and-release:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -40,6 +41,15 @@ jobs:
 
       - name: Build, verify and test
         run: npm run check
+
+      - name: Real Chromium clipboard and lightweight-mode regressions
+        shell: bash
+        run: |
+          python3 -m venv /tmp/omnigpt-browser-tests
+          source /tmp/omnigpt-browser-tests/bin/activate
+          python -m pip install --disable-pip-version-check playwright==1.57.0
+          python -m playwright install --with-deps chromium
+          python test/browser-regression.py
 
       - name: Read release version
         id: release
@@ -55,9 +65,11 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           git fetch --tags --force
-          if ! git diff --quiet -- OmniGPT.user.js && git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
-            echo "::error::OmniGPT.user.js changed, but v${VERSION} already exists. Bump package.json before publishing another userscript build."
-            exit 1
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            if ! git diff --quiet "v${VERSION}" -- OmniGPT.user.js; then
+              echo "::error::Distributable differs from the existing v${VERSION} tag. Bump package.json before publishing."
+              exit 1
+            fi
           fi
 
       - name: Keep generated userscript in sync
@@ -81,15 +93,16 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           git fetch --tags --force
-          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
-            echo "v${VERSION} already released; nothing to do."
-            exit 0
-          fi
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${VERSION}" -m "OmniGPT v${VERSION}"
-          git push origin "v${VERSION}"
-          gh release create "v${VERSION}" OmniGPT.user.js \
-            --title "OmniGPT v${VERSION}" \
-            --generate-notes
+          if ! git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            git tag -a "v${VERSION}" -m "OmniGPT v${VERSION}"
+            git push origin "v${VERSION}"
+          fi
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "v${VERSION} already released; not overwriting published assets."
+          else
+            gh release create "v${VERSION}" OmniGPT.user.js \
+              --title "OmniGPT v${VERSION}" \
+              --verify-tag --generate-notes
+          fi
