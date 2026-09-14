@@ -1,39 +1,67 @@
-name: Build userscript
+name: Build and release userscript
 
 on:
   push:
     branches: [main]
     paths:
       - "src/**"
-      - "scripts/build.mjs"
+      - "scripts/**"
       - "package.json"
       - "test/**"
       - ".github/workflows/build-userscript.yml"
   pull_request:
     paths:
       - "src/**"
-      - "scripts/build.mjs"
+      - "scripts/**"
       - "package.json"
       - "test/**"
       - ".github/workflows/build-userscript.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: omnigpt-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  check:
+  check-and-release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Build and test
+
+      - name: Build, verify and test
         run: npm run check
+
+      - name: Read release version
+        id: release
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Require a version bump for distributable changes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          git fetch --tags --force
+          if ! git diff --quiet -- OmniGPT.user.js && git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "::error::OmniGPT.user.js changed, but v${VERSION} already exists. Bump package.json before publishing another userscript build."
+            exit 1
+          fi
+
       - name: Keep generated userscript in sync
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
         run: |
           if git diff --quiet -- OmniGPT.user.js; then
             exit 0
@@ -43,3 +71,22 @@ jobs:
           git add OmniGPT.user.js
           git commit -m "Build OmniGPT userscript"
           git push
+
+      - name: Create version tag and GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "v${VERSION} already released; nothing to do."
+            exit 0
+          fi
+
+          git tag -a "v${VERSION}" -m "OmniGPT v${VERSION}"
+          git push origin "v${VERSION}"
+          gh release create "v${VERSION}" OmniGPT.user.js \
+            --title "OmniGPT v${VERSION}" \
+            --generate-notes
