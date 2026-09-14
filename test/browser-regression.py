@@ -4,6 +4,7 @@ Fixtures emulate renderer DOM; this does not automate WeChat, Obsidian, or logge
 """
 import json
 import os
+import re
 from pathlib import Path
 import statistics
 import unittest
@@ -97,9 +98,17 @@ class ClipboardTests(unittest.TestCase):
         self.page.locator('#paste').focus()
         self.page.keyboard.press('Control+v')
         self.assertEqual(self.page.locator('#paste').input_value(), expected)
+        self.page.evaluate('''document.querySelector('#rich').addEventListener('paste', event => {
+          window.richPaste = {types: [...event.clipboardData.types], text: event.clipboardData.getData('text/plain')};
+        });''')
         self.page.locator('#rich').focus()
         self.page.keyboard.press('Control+v')
-        self.assertEqual(self.page.locator('#rich').inner_text(), expected)
+        # The incoming bytes must be exact. Native contenteditable <div>/<br> layout can add
+        # blank paragraphs to innerText, which is not a change to the source clipboard item.
+        self.assertEqual(self.page.evaluate('richPaste'), {'types': ['text/plain'], 'text': expected})
+        rich_text = self.page.locator('#rich').inner_text()
+        self.assertEqual(re.sub(r'\n{3,}', '\n\n', rich_text), expected)
+        self.assertEqual(rich_text.count(TEX), 1)
         self.assertEqual(self.page.locator('#rich pre, #rich math, #rich .katex').count(), 0)
 
     def test_02_default_prototypes_unchanged_no_observers_or_network(self):
@@ -237,8 +246,10 @@ class ClipboardTests(unittest.TestCase):
         self.assertFalse(checkbox.is_checked())
         checkbox.check()
         self.assertTrue(self.page.evaluate('OmniGPTClipboard.quoteCompatibility'))
+        self.assertEqual(self.page.evaluate('localStorage.getItem("omnigpt.quote-compat")'), 'true')
         checkbox.uncheck()
         self.assertFalse(self.page.evaluate('OmniGPTClipboard.quoteCompatibility'))
+        self.assertEqual(self.page.evaluate('localStorage.getItem("omnigpt.quote-compat")'), 'false')
         self.assertTrue(self.page.evaluate('Range.prototype.toString === __originals.range'))
 
 if __name__ == '__main__':
