@@ -1,777 +1,446 @@
 (function initExporter(global) {
   "use strict";
-
   const API_PAGE_SIZE = 100;
-  const DETAIL_FETCH_CONCURRENCY = 4;
-  const GPT_UPLOAD_TARGET_CHARS = 900000;
+  const DETAIL_FETCH_CONCURRENCY = 2;
   const SESSION_TTL_MS = 4 * 60 * 1000;
-  const AUTH_RETRY_STATUSES = new Set([401, 403, 404]);
-  const ACCOUNT_HEADER_NAMES = ["chatgpt-account-id", "openai-account-id"];
-  const MATH_SELECTOR = ".katex, mjx-container, math, [data-math-source], [data-latex], [data-tex], [data-original-tex]";
-  const MAIN_MESSAGE_SELECTORS = [
-    "main section[data-turn='user']",
-    "main section[data-turn='assistant']",
-    "main [data-testid^='conversation-turn-']",
-    "main [data-message-author-role]",
-    "section[data-turn='user']",
-    "section[data-turn='assistant']",
-    "[data-testid^='conversation-turn-']",
-    "[data-message-author-role]"
-  ];
-  const BLOCK_TAGS = new Set([
-    "article", "aside", "blockquote", "div", "dl", "fieldset", "figcaption", "figure", "footer",
-    "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav",
-    "ol", "p", "pre", "section", "table", "tbody", "thead", "tr", "ul"
-  ]);
-  const REMOVABLE_SELECTORS = [
-    "button", "textarea", "input", "select", "nav", "footer", "script", "style", "noscript",
-    "[data-testid='conversation-turn-actions']"
-  ];
-
+  const GPT_UPLOAD_TARGET_CHARS = 900000;
+  const TURN = "section[data-turn='user'], section[data-turn='assistant'], [data-testid^='conversation-turn-'], [data-message-author-role]";
+  const EXCLUDE = '#omnigpt-root, nav, aside, form, [hidden], [aria-hidden="true"]';
+  const DOM_WARNING = "仅导出当前页面已加载的消息，屏幕外或未加载的历史可能缺失。";
+  const ASSET_WARNING = "附件、图片等仅保留可用的引用或占位信息，不包含二进制文件。";
   let cachedSession = null;
   let cachedSessionAt = 0;
+  let sessionPending = null;
   let cachedApiScope = null;
 
-  function normalizeText(text) {
-    return String(text || "")
-      .replace(/\u00a0/g, " ")
-      .replace(/\r/g, "")
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  }
-
-  function timestampForFile(isoString) {
-    return String(isoString || new Date().toISOString())
-      .replace(/[:]/g, "-")
-      .replace(/\.\d+Z$/, "Z");
-  }
-
-  function getConversationTitle(doc) {
-    const raw = (doc?.title || "chatgpt-conversation").replace(/\s*-\s*ChatGPT\s*$/i, "").trim();
-    return raw || "chatgpt-conversation";
-  }
-
-  function slugifyTitle(title) {
-    const fallback = `chatgpt-conversation-${timestampForFile(new Date().toISOString())}`;
-    const slug = String(title || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9\u4e00-\u9fff]+/gi, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 80);
-    return slug || fallback;
-  }
-
+  const abortError = () => Object.assign(new Error("已取消导出"), { name: "AbortError" });
+  function checkAbort(signal) { if (signal?.aborted) throw abortError(); }
+  function progress(options, value) { options.onProgress?.(value); }
   function getBaseOrigin() {
-    const origin = global.location?.origin || "https://chatgpt.com";
-    return /^https:\/\/chat\.openai\.com$/i.test(origin) ? "https://chat.openai.com" : "https://chatgpt.com";
+    return global.location?.origin === "https://chat.openai.com" ? "https://chat.openai.com" : "https://chatgpt.com";
   }
-
+  function getConversationTitle(doc) { return (doc?.title || "ChatGPT").replace(/\s*-\s*ChatGPT\s*$/i, "").trim() || "ChatGPT"; }
   function getConversationIdFromLocation(locationLike = global.location) {
-    const pathname = locationLike?.pathname || (() => {
-      try { return new URL(locationLike?.href || "", getBaseOrigin()).pathname; } catch (_) { return ""; }
+    try {
+      const pathname = locationLike?.pathname || new URL(locationLike?.href || "", getBaseOrigin()).pathname;
+      if (pathname.startsWith("/share/")) return "";
+      return decodeURIComponent(pathname.match(/(?:^|\/)c\/([^/]+)\/?$/)?.[1] || "");
+    } catch (_) { return ""; }
+  }
+  function slugifyTitle(title) {
+    return String(title || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "chatgpt-conversation";
+  }
+  function timestampForFile(time) { return String(time || new Date().toISOString()).replace(/:/g, "-").replace(/\.\d+Z$/, "Z"); }
+  function safeLine(text) { return String(text || "").replace(/[\r\n]+/g, " "); }
+  function safeTitle(text) { return safeLine(text).replace(/([\\`*_\[\]<>])/g, "\\$1"); }
+  function errorWith(message, code, status) { return Object.assign(new Error(message), { code, status }); }
+
+  async function pause(ms, signal) {
+    checkAbort(signal);
+    await new Promise((resolve, reject) => {
+      const cancel = () => { global.clearTimeout(timer); signal.removeEventListener("abort", cancel); reject(abortError()); };
+      const timer = global.setTimeout(() => { signal?.removeEventListener("abort", cancel); resolve(); }, ms);
+      signal?.addEventListener("abort", cancel, { once: true });
+    });
+  }
+
+  // The timer covers the response body too. Error messages never include tokens or response bodies.
+  async function requestJson(pathname, headers, options = {}) {
+    if (!/^\/(?:backend-api\/|api\/auth\/session$)/.test(pathname)) throw new TypeError("Unsupported request path");
+    checkAbort(options.signal);
+    const controller = global.AbortController ? new global.AbortController() : null;
+    let timedOut = false;
+    const cancel = () => controller?.abort();
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    const timer = controller ? global.setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs || 20000) : null;
+    try {
+      const response = await global.fetch(`${getBaseOrigin()}${pathname}`, {
+        credentials: "include", cache: "no-store", redirect: "error", headers,
+        ...(controller ? { signal: controller.signal } : {})
+      });
+      checkAbort(options.signal);
+      if (!response.ok) {
+        const messages = { 401: "登录已失效，请刷新后重试", 403: "没有访问权限或请求被拦截", 404: "接口或对话不可用", 429: "请求过于频繁，请稍后重试" };
+        const error = errorWith(`${messages[response.status] || "请求失败"}（HTTP ${response.status}）`, "HTTP", response.status);
+        const retry = response.headers?.get?.("retry-after");
+        error.retryAfterMs = retry == null ? null : /^\d+(?:\.\d+)?$/.test(retry) ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - Date.now());
+        // Discard the unread body without logging private response content.
+        try { await response.body?.cancel?.(); } catch (_) { /* Optional stream cleanup. */ }
+        throw error;
+      }
+      try {
+        const result = await response.json();
+        checkAbort(options.signal);
+        return result;
+      } catch (error) {
+        if (options.signal?.aborted || timedOut) throw error;
+        throw errorWith("接口未返回有效 JSON，可能需要重新登录", "SCHEMA");
+      }
+    } catch (error) {
+      if (options.signal?.aborted) throw abortError();
+      if (timedOut) throw errorWith("读取超时，请重试或选择已加载页面导出", "TIMEOUT");
+      if (error.code) throw error;
+      throw errorWith("网络请求失败，请检查连接后重试", "NETWORK");
+    } finally {
+      if (timer !== null) global.clearTimeout(timer);
+      options.signal?.removeEventListener("abort", cancel);
+    }
+  }
+
+  async function getSession(forceRefresh = false, options = {}) {
+    checkAbort(options.signal);
+    if (sessionPending) return sessionPending;
+    if (!forceRefresh && cachedSession && Date.now() - cachedSessionAt < SESSION_TTL_MS) return cachedSession;
+    sessionPending = (async () => {
+      const session = await requestJson("/api/auth/session", { accept: "application/json" }, options);
+      if (!session || typeof session !== "object") throw errorWith("登录会话格式不可用", "SCHEMA");
+      cachedSession = session;
+      cachedSessionAt = Date.now();
+      if (forceRefresh) cachedApiScope = null;
+      return session;
     })();
-    for (const pattern of [/\/c\/([^/?#]+)/i, /\/g\/[^/]+\/c\/([^/?#]+)/i]) {
-      const match = pathname.match(pattern);
-      if (match?.[1]) return decodeURIComponent(match[1]);
+    try { return await sessionPending; } finally { sessionPending = null; }
+  }
+  async function getAccessToken(forceRefresh, options) {
+    try {
+      const session = await getSession(forceRefresh, options);
+      return session.accessToken || session.access_token || null;
+    } catch (error) {
+      if (error.name === "AbortError" || error.status === 429) throw error;
+      return null; // A bounded cookie-auth attempt remains available.
     }
-    return "";
   }
-
-  function isElement(node) { return Boolean(node && node.nodeType === 1); }
-  function isText(node) { return Boolean(node && node.nodeType === 3); }
-
-  function isLikelyVisible(node) {
-    if (!isElement(node) || !global.getComputedStyle) return true;
-    const style = global.getComputedStyle(node);
-    return !style || (style.display !== "none" && style.visibility !== "hidden");
+  function buildHeaders(token, scope) {
+    return { accept: "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(scope?.accountId ? { [scope.headerName]: scope.accountId } : {}) };
   }
-
-  function escapeInlineText(text) {
-    return String(text || "")
-      .replace(/\s+/g, " ")
-      .replace(/\\/g, "\\\\")
-      .replace(/`/g, "\\`")
-      .replace(/\*/g, "\\*")
-      .replace(/_/g, "\\_")
-      .replace(/\[/g, "\\[")
-      .replace(/\]/g, "\\]")
-      .replace(/\|/g, "\\|");
+  function accountCandidates() {
+    // Only explicit account identifiers; do not scan or deserialize the entire site's storage.
+    return [...new Set([cachedSession?.account?.id, cachedSession?.account_id, cachedSession?.current_account_id])]
+      .filter((id) => typeof id === "string" && /^[\w-]{6,160}$/.test(id)).slice(0, 2);
   }
-
-  function unwrapMathDelimiters(source) {
-    let value = normalizeText(source).replace(/^latex\s*:\s*/i, "");
-    if ((value.startsWith("$$") && value.endsWith("$$")) || (value.startsWith("\\[") && value.endsWith("\\]"))) {
-      value = value.slice(2, -2);
-    } else if ((value.startsWith("$") && value.endsWith("$")) || (value.startsWith("\\(") && value.endsWith("\\)"))) {
-      value = value.slice(1, -1);
-    }
-    return value.trim();
-  }
-
-  function findRawTex(element) {
-    if (!isElement(element)) return "";
-    const annotation = element.querySelector?.('annotation[encoding="application/x-tex"], annotation');
-    if (annotation?.textContent?.trim()) return unwrapMathDelimiters(annotation.textContent);
-    let candidate = element;
-    for (let depth = 0; candidate && depth < 7; depth += 1, candidate = candidate.parentElement) {
-      for (const attr of ["data-omnigpt-tex", "data-math-source", "data-latex", "data-tex", "data-original-tex", "alttext"]) {
-        const value = candidate.getAttribute?.(attr);
-        if (value?.trim()) return unwrapMathDelimiters(value);
+  async function fetchJson(pathname, options = {}) {
+    const { requireAuth = false, retryWithFreshToken = true } = options;
+    let token = requireAuth ? await getAccessToken(false, options) : null;
+    let refreshed = false;
+    let transientRetries = 0;
+    let scope = cachedApiScope;
+    let scopes = null;
+    while (true) {
+      checkAbort(options.signal);
+      try {
+        const result = await requestJson(pathname, buildHeaders(token, scope), options);
+        if (scope) cachedApiScope = scope;
+        return result;
+      } catch (error) {
+        if (error.name === "AbortError") throw error;
+        if (requireAuth && retryWithFreshToken && !refreshed && [401, 403, 404].includes(error.status)) {
+          refreshed = true;
+          const current = cachedSession?.accessToken || cachedSession?.access_token;
+          token = current && current !== token ? current : await getAccessToken(true, options);
+          scope = cachedApiScope;
+          continue;
+        }
+        if ([429, 500, 502, 503, 504].includes(error.status) && transientRetries < 2) {
+          const delay = error.retryAfterMs ?? 750 * 2 ** transientRetries;
+          if (!Number.isFinite(delay) || delay > 30000) throw error;
+          transientRetries += 1;
+          progress(options, { phase: "retry", status: error.status, attempt: transientRetries });
+          await pause(delay, options.signal);
+          continue;
+        }
+        if (requireAuth && error.status === 404 && pathname.startsWith("/backend-api/")) {
+          scopes ??= accountCandidates().flatMap((accountId) => ["chatgpt-account-id", "openai-account-id"].map((headerName) => ({ accountId, headerName })))
+            .filter((candidate) => candidate.accountId !== scope?.accountId || candidate.headerName !== scope?.headerName);
+          if (scopes.length) { scope = scopes.shift(); continue; }
+        }
+        throw error;
       }
     }
-    if (element.matches?.(".katex, math")) {
-      const aria = element.getAttribute("aria-label");
-      if (aria?.trim()) return unwrapMathDelimiters(aria);
+  }
+
+  async function fetchConversationDetail(id, options = {}) {
+    if (!id) throw errorWith("缺少对话 ID", "SCHEMA");
+    for (const [index, prefix] of ["conversation", "conversations"].entries()) {
+      try {
+        const result = await fetchJson(`/backend-api/${prefix}/${encodeURIComponent(id)}`, { ...options, requireAuth: true });
+        return result?.conversation?.mapping ? result.conversation : result;
+      } catch (error) { if (index || ![404, 405].includes(error.status)) throw error; }
     }
-    return "";
   }
 
-  function isDisplayMath(element) {
-    return Boolean(
-      element?.closest?.(".katex-display") ||
-      element?.matches?.("mjx-container[display='true'], math[display='block']") ||
-      element?.closest?.("[data-math-display='true'], .math-display")
-    );
-  }
-
-  function renderFormula(node) {
-    const source = findRawTex(node);
-    if (!source) return normalizeText(node.getAttribute?.("aria-label") || node.textContent || "");
-    return isDisplayMath(node) ? `\n$$\n${source}\n$$\n\n` : `$${source}$`;
-  }
-
-  function cleanClone(node) {
-    const clone = node.cloneNode(true);
-    clone.querySelectorAll?.(REMOVABLE_SELECTORS.join(",")).forEach((element) => {
-      if (element.tagName === "BUTTON" && element.closest("pre")) return;
-      element.remove();
-    });
-    clone.querySelectorAll?.("[class]").forEach((element) => {
-      if (/sr-only|screen-reader|visually-hidden/i.test(element.getAttribute("class") || "")) element.remove();
-    });
-    return clone;
-  }
-
-  function scoreCandidate(node) {
-    const textLength = normalizeText(node.innerText || node.textContent || "").length;
-    const richScore = node.querySelectorAll?.("pre, code, table, ul, ol, blockquote, a, img").length * 12 || 0;
-    const markdownHint = /\b(markdown|prose|whitespace-pre-wrap|text-message)\b/i.test(node.className || "") ? 50 : 0;
-    return textLength + richScore + markdownHint;
-  }
-
-  function findBestContentNode(turn) {
-    const selectors = [
-      ".markdown", "[class*='markdown']", ".prose", "[class*='prose']", ".whitespace-pre-wrap",
-      "[class*='whitespace-pre-wrap']", "[class*='text-message']", "[data-message-author-role]"
-    ];
-    const candidates = [];
-    selectors.forEach((selector) => turn.querySelectorAll?.(selector).forEach((node) => {
-      if (isLikelyVisible(node) && normalizeText(node.innerText || node.textContent).length) candidates.push(node);
-    }));
-    if (!candidates.length) return turn;
-    return candidates.sort((a, b) => scoreCandidate(b) - scoreCandidate(a))[0];
-  }
-
-  function extractRoleFromNode(node) {
-    const dataTurn = node.getAttribute?.("data-turn") || node.closest?.("[data-turn]")?.getAttribute("data-turn");
-    if (dataTurn === "user" || dataTurn === "assistant") return dataTurn;
-    const explicit = node.getAttribute?.("data-message-author-role") ||
-      node.querySelector?.("[data-message-author-role]")?.getAttribute("data-message-author-role");
-    if (explicit) return explicit === "tool" ? "assistant" : explicit;
-    return node.querySelector?.(".user-message-bubble-color") ? "user" : "assistant";
-  }
-
-  function extractLanguage(preElement) {
-    const code = preElement.querySelector?.("code");
-    const tokens = `${preElement.className || ""} ${code?.className || ""}`.split(/\s+/);
-    for (const token of tokens) {
-      const match = token.match(/(?:language|lang)-([a-z0-9#+-]+)/i);
-      if (match) return match[1].toLowerCase();
+  function activeNodes(conversation) {
+    const mapping = conversation?.mapping;
+    if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) throw errorWith("对话结构不可识别", "SCHEMA");
+    let nodeId = conversation.current_node;
+    const warnings = [];
+    if (!nodeId || !Object.hasOwn(mapping, nodeId)) {
+      const parents = new Set(Object.values(mapping).map((node) => node?.parent).filter(Boolean));
+      const leaves = Object.keys(mapping).filter((id) => !parents.has(id));
+      if (leaves.length !== 1) throw errorWith("无法确定当前回答分支，未混合导出备选回答", "BRANCH");
+      nodeId = leaves[0];
+      warnings.push("接口未标记当前分支，使用唯一叶节点对应的分支。");
     }
-    return "";
-  }
-
-  function hasBlockChild(node) {
-    return Array.from(node.childNodes || []).some((child) => isElement(child) && BLOCK_TAGS.has(child.tagName.toLowerCase()));
-  }
-
-  function renderInlineChildren(node) {
-    return Array.from(node.childNodes || [])
-      .map((child) => renderNode(child, { preserveWhitespace: false, indent: "" }))
-      .join("")
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/\n{3,}/g, "\n\n");
-  }
-
-  function renderListItem(item, indent, marker) {
-    const inlineParts = [];
-    const nestedParts = [];
-    Array.from(item.childNodes || []).forEach((child) => {
-      if (isElement(child) && ["ul", "ol"].includes(child.tagName.toLowerCase())) {
-        nestedParts.push(renderList(child, `${indent}  `).trimEnd());
-      } else {
-        inlineParts.push(renderNode(child, { preserveWhitespace: false, indent }));
-      }
-    });
-    const lines = normalizeText(inlineParts.join(""))?.split("\n") || [""];
-    const segments = [`${indent}${marker}${lines[0] || ""}`.trimEnd()];
-    if (lines.length > 1) {
-      segments.push(lines.slice(1).map((line) => `${indent}${" ".repeat(marker.length)}${line}`.trimEnd()).join("\n"));
-    }
-    if (nestedParts.length) segments.push(nestedParts.join("\n"));
-    return segments.filter(Boolean).join("\n");
-  }
-
-  function renderList(node, indent) {
-    const ordered = node.tagName.toLowerCase() === "ol";
-    const items = Array.from(node.children || []).filter((child) => child.tagName?.toLowerCase() === "li");
-    return `${items.map((item, index) => renderListItem(item, indent, ordered ? `${index + 1}. ` : "- ")).join("\n")}\n\n`;
-  }
-
-  function renderTable(table) {
-    const rows = Array.from(table.querySelectorAll?.("tr") || []);
-    if (!rows.length) return "";
-    const matrix = rows.map((row) => Array.from(row.children || [])
-      .filter((cell) => ["th", "td"].includes(cell.tagName.toLowerCase()))
-      .map((cell) => normalizeText(cell.innerText || cell.textContent || "").replace(/\|/g, "\\|")));
-    const columns = Math.max(0, ...matrix.map((row) => row.length));
-    if (!columns) return "";
-    const normalized = matrix.map((row) => [...row, ...new Array(columns - row.length).fill("")]);
-    const lines = [`| ${normalized[0].join(" | ")} |`, `| ${new Array(columns).fill("---").join(" | ")} |`];
-    normalized.slice(1).forEach((row) => lines.push(`| ${row.join(" | ")} |`));
-    return `${lines.join("\n")}\n\n`;
-  }
-
-  function renderNode(node, context) {
-    if (isText(node)) return context.preserveWhitespace ? String(node.nodeValue || "") : escapeInlineText(node.nodeValue || "");
-    if (!isElement(node)) return "";
-    const tag = node.tagName.toLowerCase();
-    if (["script", "style", "noscript"].includes(tag)) return "";
-    if (node.matches?.(MATH_SELECTOR)) return renderFormula(node);
-    if (tag === "br") return "\n";
-    if (tag === "hr") return "\n---\n\n";
-    if (tag === "pre") {
-      const code = node.querySelector?.("code");
-      const content = code ? code.textContent || "" : node.textContent || "";
-      return `\n\`\`\`${extractLanguage(node)}\n${String(content).replace(/```/g, "`` `").replace(/\n$/, "")}\n\`\`\`\n\n`;
-    }
-    if (tag === "code") return node.closest?.("pre") ? node.textContent || "" : `\`${String(node.textContent || "").replace(/`/g, "\\`")}\``;
-    if (/^h[1-6]$/.test(tag)) return `${"#".repeat(Number(tag.slice(1)))} ${normalizeText(renderInlineChildren(node))}\n\n`;
-    if (tag === "p") {
-      const content = normalizeText(renderInlineChildren(node));
-      return content ? `${content}\n\n` : "";
-    }
-    if (tag === "blockquote") {
-      const content = normalizeText(Array.from(node.childNodes || []).map((child) => renderNode(child, context)).join(""));
-      return content ? `${content.split("\n").map((line) => `> ${line}`).join("\n")}\n\n` : "";
-    }
-    if (tag === "ul" || tag === "ol") return renderList(node, context.indent || "");
-    if (tag === "table") return renderTable(node);
-    if (tag === "a") {
-      const text = normalizeText(renderInlineChildren(node)) || node.getAttribute("href") || "";
-      const href = node.getAttribute("href") || "";
-      return href ? `[${text}](${href})` : text;
-    }
-    if (tag === "img") {
-      const src = node.getAttribute("src") || "";
-      return src ? `![${node.getAttribute("alt") || "image"}](${src})` : "";
-    }
-    if (tag === "strong" || tag === "b") return `**${normalizeText(renderInlineChildren(node))}**`;
-    if (tag === "em" || tag === "i") return `*${normalizeText(renderInlineChildren(node))}*`;
-    if (tag === "del" || tag === "s") return `~~${normalizeText(renderInlineChildren(node))}~~`;
-    if (tag === "li") return renderListItem(node, context.indent || "", "- ");
-    const rendered = Array.from(node.childNodes || []).map((child) => renderNode(child, {
-      preserveWhitespace: context.preserveWhitespace || tag === "pre",
-      indent: context.indent || ""
-    })).join("");
-    if (BLOCK_TAGS.has(tag) || hasBlockChild(node)) {
-      const content = normalizeText(rendered);
-      return content ? `${content}\n\n` : "";
-    }
-    return rendered;
-  }
-
-  function canonicalTurnNode(node) {
-    return node.closest?.("section[data-turn], [data-testid^='conversation-turn-']") || node;
-  }
-
-  function getCurrentConversationMessageNodes(doc) {
-    const root = doc || global.document;
-    const seen = new Set();
     const nodes = [];
-    MAIN_MESSAGE_SELECTORS.forEach((selector) => root.querySelectorAll?.(selector).forEach((candidate) => {
-      const node = canonicalTurnNode(candidate);
-      if (!isElement(node) || seen.has(node) || !isLikelyVisible(node)) return;
-      if (node.closest?.(`#omnigpt-root, nav, aside, form`)) return;
-      if (!normalizeText(node.innerText || node.textContent || "")) return;
-      seen.add(node);
-      nodes.push(node);
-    }));
-    return nodes;
+    const visited = new Set();
+    while (nodeId) {
+      if (!Object.hasOwn(mapping, nodeId) || !mapping[nodeId] || visited.has(nodeId)) throw errorWith("对话分支存在缺失节点或循环", "BRANCH");
+      visited.add(nodeId);
+      nodes.push({ ...mapping[nodeId], id: nodeId });
+      nodeId = mapping[nodeId].parent;
+    }
+    return { nodes: nodes.reverse(), warnings };
   }
-
-  function extractMessageFromNode(node, index) {
-    const contentRoot = findBestContentNode(node);
-    const cleaned = cleanClone(contentRoot);
-    const markdown = normalizeText(renderNode(cleaned, { preserveWhitespace: false, indent: "" }));
-    const text = normalizeText(cleaned.innerText || cleaned.textContent || "");
-    if (!markdown && !text) return null;
-    return { index: index + 1, role: extractRoleFromNode(node), text, markdown };
-  }
-
-  function collectConversation(doc) {
-    const documentRef = doc || global.document;
-    const messages = getCurrentConversationMessageNodes(documentRef)
-      .map((node, index) => extractMessageFromNode(node, index))
-      .filter(Boolean);
-    return {
-      title: getConversationTitle(documentRef),
-      url: global.location?.href || "",
-      exportedAt: new Date().toISOString(),
-      messageCount: messages.length,
-      messages
-    };
-  }
-
-  function stringifyApiPart(part) {
+  function partText(part, state) {
     if (typeof part === "string") return part;
     if (part == null) return "";
-    if (Array.isArray(part)) return normalizeText(part.map(stringifyApiPart).join("\n\n"));
+    if (Array.isArray(part)) return part.map((item) => partText(item, state)).join("\n\n");
     if (typeof part === "object") {
       if (typeof part.text === "string") return part.text;
-      if (Array.isArray(part.content)) return normalizeText(part.content.map(stringifyApiPart).join("\n\n"));
-      if (part.content && typeof part.content === "object") return stringifyApiPart(part.content);
-      if (Array.isArray(part.parts)) return normalizeText(part.parts.map(stringifyApiPart).join("\n\n"));
-      if (part.asset_pointer) return `[asset] ${part.asset_pointer}`;
-      if (part.url) return part.url;
-      if (part.name) return part.name;
+      if (part.parts) return partText(part.parts, state);
+      if (part.content) return partText(part.content, state);
+      state.assets = true;
+      return `[附件/非文本内容：${safeLine(part.name || part.content_type || "asset")}]`;
     }
     return String(part);
   }
-
-  function extractApiMessageText(message) {
-    if (!message) return "";
-    if (typeof message.text === "string") return normalizeText(message.text);
-    const content = message.content || {};
-    if (Array.isArray(content.parts)) return normalizeText(content.parts.map(stringifyApiPart).join("\n\n"));
-    if (typeof content.text === "string") return normalizeText(content.text);
-    if (Array.isArray(message.parts)) return normalizeText(message.parts.map(stringifyApiPart).join("\n\n"));
-    return "";
-  }
-
-  function normalizeApiRole(author) {
-    const role = author?.role || author || "";
-    if (role === "assistant" || role === "tool") return "assistant";
-    if (role === "user" || role === "system") return role;
-    return "";
-  }
-
-  function extractMessagesFromApiConversation(conversation) {
-    const mapping = conversation?.mapping || {};
-    const path = [];
-    const visited = new Set();
-    let nodeId = conversation?.current_node;
-    while (nodeId && mapping[nodeId] && !visited.has(nodeId)) {
-      visited.add(nodeId);
-      path.push(mapping[nodeId]);
-      nodeId = mapping[nodeId].parent;
+  function messagesFromNodes(nodes) {
+    const state = { assets: false };
+    const messages = [];
+    for (const node of nodes) {
+      const message = node.message;
+      const role = message?.author?.role;
+      if (!["user", "assistant"].includes(role) || message?.metadata?.is_visually_hidden_from_conversation ||
+          ["analysis", "justify", "confidence"].includes(message?.channel) ||
+          (role === "assistant" && message.recipient && message.recipient !== "all")) continue;
+      if (message?.metadata?.attachments?.length) state.assets = true;
+      const content = message.text ?? message.content?.parts ?? message.content?.text ?? message.parts;
+      const text = content == null && message.content?.content_type ? partText(message.content, state) : partText(content, state);
+      if (!text.trim()) continue;
+      messages.push({ index: messages.length + 1, id: message.id || node.id, role, text, markdown: text,
+        ...(message.create_time != null ? { createTime: message.create_time } : {}) });
     }
-    let nodes = path.reverse();
-    if (!nodes.length) {
-      nodes = Object.values(mapping).filter((node) => node?.message).sort((a, b) =>
-        Number(a.message?.create_time || 0) - Number(b.message?.create_time || 0));
-    }
-    return nodes.map((node) => {
-      const role = normalizeApiRole(node?.message?.author);
-      const text = extractApiMessageText(node?.message);
-      if (!role || !text) return null;
-      return { role, text, markdown: text };
-    }).filter(Boolean).map((message, index) => ({ ...message, index: index + 1 }));
+    return { messages, warnings: state.assets ? [ASSET_WARNING] : [] };
   }
-
-  async function getSession(forceRefresh = false) {
-    const freshEnough = cachedSession && Date.now() - cachedSessionAt < SESSION_TTL_MS;
-    if (freshEnough && !forceRefresh) return cachedSession;
-    const response = await global.fetch(`${getBaseOrigin()}/api/auth/session`, {
-      credentials: "include",
-      headers: { accept: "application/json" }
-    });
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "");
-      const error = new Error(`Unable to read ChatGPT session (${response.status}): ${errorText || "session request failed"}`);
-      error.status = response.status;
-      throw error;
-    }
-    cachedSession = await response.json();
-    cachedSessionAt = Date.now();
-    return cachedSession;
-  }
-
-  async function getAccessToken(forceRefresh = false) {
-    try {
-      const session = await getSession(forceRefresh);
-      return session?.accessToken || session?.access_token || null;
-    } catch (error) {
-      console.warn("[OmniGPT] Unable to refresh ChatGPT session; trying cookie auth.", error);
-      return null;
-    }
-  }
-
-  function addAccountId(value, ids) {
-    if (typeof value !== "string") return;
-    const trimmed = value.trim();
-    if (trimmed && trimmed.length >= 6 && trimmed.length <= 160 && !/\s/.test(trimmed)) ids.add(trimmed);
-  }
-
-  function collectAccountIdsDeep(value, ids, keyHint = "", depth = 0) {
-    if (depth > 7 || value == null) return;
-    if (typeof value === "string") {
-      if (/account|workspace|organization|org|team/i.test(keyHint)) addAccountId(value, ids);
-      const matches = value.match(/\b(?:account|workspace|org|team)-[A-Za-z0-9_-]{6,}\b/g) || [];
-      matches.forEach((match) => ids.add(match));
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach((item) => collectAccountIdsDeep(item, ids, keyHint, depth + 1));
-      return;
-    }
-    if (typeof value === "object") {
-      Object.entries(value).forEach(([key, nested]) => collectAccountIdsDeep(nested, ids, key, depth + 1));
-    }
-  }
-
-  async function getAccountIds(forceRefresh = false) {
-    const ids = new Set();
-    try { collectAccountIdsDeep(await getSession(forceRefresh), ids); } catch (_) {}
-    for (const storage of [global.localStorage, global.sessionStorage]) {
-      if (!storage) continue;
-      try {
-        for (let index = 0; index < storage.length; index += 1) {
-          const key = storage.key(index);
-          const value = storage.getItem(key);
-          collectAccountIdsDeep(value, ids, key || "storage");
-          try { collectAccountIdsDeep(JSON.parse(value), ids); } catch (_) {}
-        }
-      } catch (_) {}
-    }
-    return [...ids].slice(0, 6);
-  }
-
-  function buildHeaders(token, scope) {
-    const headers = { accept: "application/json" };
-    if (token) headers.authorization = `Bearer ${token}`;
-    if (scope?.accountId && scope?.headerName) headers[scope.headerName] = scope.accountId;
-    return headers;
-  }
-
-  async function request(pathname, token, scope) {
-    return global.fetch(`${getBaseOrigin()}${pathname}`, {
-      credentials: "include",
-      headers: buildHeaders(token, scope)
-    });
-  }
-
-  async function responseError(response, pathname) {
-    const errorText = await response.text().catch(() => "");
-    const error = new Error(`Request failed (${response.status}): ${errorText || pathname}`);
-    error.status = response.status;
-    error.pathname = pathname;
-    return error;
-  }
-
-  async function fetchJson(pathname, options = {}) {
-    const { requireAuth = false, retryWithFreshToken = true } = options;
-    let token = requireAuth ? await getAccessToken(false) : null;
-    let response = await request(pathname, token, cachedApiScope);
-    if (response.ok) return response.json();
-
-    if (requireAuth && retryWithFreshToken && AUTH_RETRY_STATUSES.has(response.status)) {
-      token = await getAccessToken(true);
-      response = await request(pathname, token, cachedApiScope);
-      if (response.ok) return response.json();
-    }
-
-    if (response.status === 404 && pathname.startsWith("/backend-api/")) {
-      const accountIds = await getAccountIds(false);
-      for (const accountId of accountIds) {
-        for (const headerName of ACCOUNT_HEADER_NAMES) {
-          const scope = { accountId, headerName };
-          const scopedResponse = await request(pathname, token, scope);
-          if (scopedResponse.ok) {
-            cachedApiScope = scope;
-            return scopedResponse.json();
-          }
-          response = scopedResponse;
-        }
-      }
-    }
-
-    throw await responseError(response, pathname);
-  }
-
-  function getConversationListItems(payload) {
-    if (Array.isArray(payload)) return payload;
-    for (const key of ["items", "conversations", "data"]) {
-      if (Array.isArray(payload?.[key])) return payload[key];
-    }
-    return [];
-  }
-
-  async function fetchAllConversationSummaries() {
-    const conversations = [];
-    let offset = 0;
-    while (true) {
-      const payload = await fetchJson(`/backend-api/conversations?offset=${offset}&limit=${API_PAGE_SIZE}&order=updated`, { requireAuth: true });
-      const items = getConversationListItems(payload);
-      if (!items.length) break;
-      conversations.push(...items);
-      if (payload?.has_more === false || items.length < API_PAGE_SIZE) break;
-      offset += items.length;
-    }
-    return conversations;
-  }
-
-  async function fetchConversationDetail(id) {
-    let firstError = null;
-    for (const pathname of [
-      `/backend-api/conversation/${encodeURIComponent(id)}`,
-      `/backend-api/conversations/${encodeURIComponent(id)}`
-    ]) {
-      try { return await fetchJson(pathname, { requireAuth: true }); }
-      catch (error) {
-        firstError ||= error;
-        if (![404, 405].includes(error?.status)) throw error;
-      }
-    }
-    throw firstError || new Error(`Unable to fetch conversation ${id}`);
-  }
-
+  function extractMessagesFromApiConversation(conversation) { return messagesFromNodes(activeNodes(conversation).nodes).messages; }
   function conversationFromApi(detail, summary = {}) {
-    const messages = extractMessagesFromApiConversation(detail);
-    const id = detail?.id || detail?.conversation_id || summary?.id || summary?.conversation_id || "";
-    return {
-      id,
-      title: detail?.title || summary?.title || "Untitled conversation",
-      url: id ? `${global.location?.origin || getBaseOrigin()}/c/${id}` : global.location?.href || "",
-      exportedAt: new Date().toISOString(),
-      createTime: detail?.create_time || summary?.create_time || null,
-      updateTime: detail?.update_time || summary?.update_time || null,
-      messageCount: messages.length,
-      messages
-    };
+    const path = activeNodes(detail);
+    const result = messagesFromNodes(path.nodes);
+    if (!result.messages.length) throw errorWith("未找到可导出的用户或助手正文", "EMPTY");
+    const id = detail.id || detail.conversation_id || summary.id || summary.conversation_id || "";
+    return { schemaVersion: 1, id, title: detail.title || summary.title || "Untitled conversation",
+      url: id ? `${getBaseOrigin()}/c/${encodeURIComponent(id)}` : "", exportedAt: new Date().toISOString(),
+      createTime: detail.create_time ?? summary.create_time ?? null, updateTime: detail.update_time ?? summary.update_time ?? null,
+      acquisition: "api", partial: false, warnings: [...path.warnings, ...result.warnings],
+      messageCount: result.messages.length, messages: result.messages };
   }
 
-  async function collectCurrentConversation(doc) {
+  function collectConversation(doc = global.document) {
+    if (!global.OmniGPTClipboard?.serializeElement) throw errorWith("页面解析模块不可用，请刷新页面", "DOM");
+    const root = doc.querySelector("main") || doc;
+    const canonical = (node) => node.closest("section[data-turn], [data-testid^='conversation-turn-']") || node;
+    // querySelectorAll on one union preserves DOM order (not all users followed by assistants).
+    const nodes = [...new Set(Array.from(root.querySelectorAll(TURN), canonical))];
+    const selected = new Set(nodes);
+    const messages = [];
+    for (const node of nodes) {
+      if (node.closest(EXCLUDE)) continue;
+      let nested = false;
+      for (let parent = node.parentElement; parent; parent = parent.parentElement) if (selected.has(parent)) { nested = true; break; }
+      if (nested) continue;
+      if (global.getComputedStyle) {
+        const style = global.getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+      }
+      const role = node.getAttribute("data-turn") || node.getAttribute("data-message-author-role") || node.querySelector("[data-message-author-role]")?.getAttribute("data-message-author-role") || "assistant";
+      if (!["user", "assistant"].includes(role)) continue;
+      const rendered = global.OmniGPTClipboard.serializeElement(node, { mathStyle: "markdown" });
+      if (!rendered?.text?.trim()) continue;
+      messages.push({ index: messages.length + 1, role, text: rendered.text, markdown: rendered.text });
+    }
+    return { schemaVersion: 1, title: getConversationTitle(doc), url: global.location?.href || "", exportedAt: new Date().toISOString(),
+      acquisition: "dom", partial: true, warnings: [DOM_WARNING, ASSET_WARNING], messageCount: messages.length, messages };
+  }
+
+  async function collectCurrentConversation(doc = global.document, options = {}) {
+    const locationAtStart = global.location?.href;
+    const ensureLocation = () => {
+      checkAbort(options.signal);
+      if (global.location?.href !== locationAtStart) throw errorWith("页面已切换，请在目标对话重新导出", "NAVIGATION");
+    };
     const id = getConversationIdFromLocation();
-    if (id) {
+    let apiError = null;
+    if (id && options.source !== "dom") {
+      progress(options, { phase: "current", source: "api" });
       try {
-        const detail = await fetchConversationDetail(id);
-        const conversation = conversationFromApi(detail, { id, title: getConversationTitle(doc || global.document) });
-        if (conversation.messageCount) return conversation;
+        const result = conversationFromApi(await fetchConversationDetail(id, options), { id, title: getConversationTitle(doc) });
+        ensureLocation();
+        return result;
       } catch (error) {
-        console.warn("[OmniGPT] API-first current export failed; falling back to DOM.", error);
+        ensureLocation();
+        if (error.name === "AbortError") throw error;
+        apiError = error;
       }
     }
-    return collectConversation(doc || global.document);
+    ensureLocation();
+    progress(options, { phase: "current", source: "dom" });
+    const result = collectConversation(doc);
+    if (apiError) result.warnings.unshift(`完整对话读取失败：${apiError.message}；已回退为页面导出。`);
+    if (!result.messageCount) throw apiError || errorWith("页面未找到可导出的正文", "EMPTY");
+    return result;
   }
 
-  async function collectAllConversations() {
-    const summaries = await fetchAllConversationSummaries();
-    if (!summaries.length) throw new Error("No conversations found in your ChatGPT history.");
+  async function fetchAllConversationSummaries(options = {}) {
+    const max = Number(options.maxConversations || 0);
+    if (!Number.isInteger(max) || max < 0) throw new TypeError("Invalid conversation limit");
+    const conversations = [];
+    const seen = new Set();
+    let offset = 0;
+    for (let page = 0; page < 200; page += 1) {
+      checkAbort(options.signal);
+      const payload = await fetchJson(`/backend-api/conversations?offset=${offset}&limit=${API_PAGE_SIZE}&order=updated`, { ...options, requireAuth: true });
+      const items = Array.isArray(payload) ? payload : [payload?.items, payload?.conversations, payload?.data].find(Array.isArray);
+      if (!items) throw errorWith("历史列表格式变化，未返回空归档", "SCHEMA");
+      if (!items.length) {
+        if (payload.has_more === true) throw errorWith("历史分页返回空页但仍有下一页，已停止避免漏导", "PAGINATION");
+        return conversations;
+      }
+      let added = 0;
+      for (const item of items) {
+        const id = item?.id || item?.conversation_id;
+        if (!id) throw errorWith("历史条目缺少 ID", "SCHEMA");
+        if (seen.has(id)) continue;
+        seen.add(id); added += 1;
+        conversations.push({ ...item, id });
+        if (max && conversations.length >= max) return conversations;
+      }
+      progress(options, { phase: "listing", completed: conversations.length });
+      if (!added) throw errorWith("历史分页重复，已停止避免无限请求", "PAGINATION");
+      offset += items.length;
+      if (payload.has_more === false || (typeof payload.total === "number" && offset >= payload.total) ||
+          (payload.has_more !== true && typeof payload.total !== "number" && items.length < API_PAGE_SIZE)) return conversations;
+    }
+    throw errorWith("历史分页超过安全上限，请限制导出数量", "PAGINATION");
+  }
+  async function collectAllConversations(options = {}) {
+    const summaries = await fetchAllConversationSummaries(options);
+    if (!summaries.length) throw errorWith("当前账号历史列表没有可导出的对话", "EMPTY");
     const conversations = [];
     const failures = [];
-    for (let index = 0; index < summaries.length; index += DETAIL_FETCH_CONCURRENCY) {
-      const batch = summaries.slice(index, index + DETAIL_FETCH_CONCURRENCY);
-      const settled = await Promise.all(batch.map(async (summary) => {
-        const id = summary?.id || summary?.conversation_id;
-        if (!id) return null;
-        try { return conversationFromApi(await fetchConversationDetail(id), summary); }
+    for (let i = 0; i < summaries.length; i += DETAIL_FETCH_CONCURRENCY) {
+      checkAbort(options.signal);
+      let fatal = null;
+      const batch = await Promise.all(summaries.slice(i, i + DETAIL_FETCH_CONCURRENCY).map(async (summary) => {
+        try { return conversationFromApi(await fetchConversationDetail(summary.id, options), summary); }
         catch (error) {
-          failures.push({ id, title: summary.title || "Untitled conversation", error: error?.message || "Unknown export error" });
+          if (error.name === "AbortError" || [401, 403, 429].includes(error.status)) fatal = error;
+          failures.push({ id: summary.id, title: summary.title || "Untitled", error: error.message, code: error.code, status: error.status });
           return null;
         }
       }));
-      settled.filter(Boolean).forEach((conversation) => conversations.push(conversation));
+      if (fatal) throw fatal;
+      conversations.push(...batch.filter(Boolean));
+      progress(options, { phase: "details", completed: Math.min(i + DETAIL_FETCH_CONCURRENCY, summaries.length),
+        total: summaries.length, succeeded: conversations.length, failed: failures.length });
+      // Yield between batches; no idle polling or permanently running timer.
+      await pause(0, options.signal);
     }
-    return {
-      exportedAt: new Date().toISOString(),
-      source: global.location?.origin || getBaseOrigin(),
-      totalConversations: conversations.length,
-      requestedConversations: summaries.length,
-      failedConversations: failures.length,
-      failures,
-      conversations
-    };
+    checkAbort(options.signal);
+    if (!conversations.length) throw errorWith(`全部 ${failures.length} 条对话读取失败，未生成空归档。${failures[0]?.error || ""}`, "EMPTY");
+    return { schemaVersion: 1, exportedAt: new Date().toISOString(), source: getBaseOrigin(), scope: "accessible-history-list",
+      totalConversations: conversations.length, requestedConversations: summaries.length, failedConversations: failures.length,
+      partial: failures.length > 0, warnings: ["仅涵盖当前账号历史列表返回的对话，不保证包含其他工作区、已归档或项目内未列出的对话。", ASSET_WARNING],
+      failures, conversations };
   }
 
-  function formatRoleLabel(role) {
-    if (role === "user") return "User";
-    if (role === "system") return "System";
-    return "ChatGPT";
+  function formatRoleLabel(role) { return ({ user: "User", assistant: "ChatGPT", system: "System", tool: "Tool" })[role] || String(role); }
+  function warningLines(value) { return (value.warnings || []).map((warning) => `> 注意：${safeLine(warning)}`).join("\n"); }
+  function formatMarkdown(conversation, options = {}) {
+    const sections = [`# ${safeTitle(conversation.title)}`];
+    if (options.includeMetadata !== false) sections.push(`- Exported at: ${conversation.exportedAt || ""}\n- Source: ${conversation.url || ""}\n- Messages: ${conversation.messageCount}\n- Acquisition: ${conversation.acquisition || "unknown"}`);
+    if (conversation.warnings?.length) sections.push(warningLines(conversation));
+    for (const message of conversation.messages) sections.push(`## ${message.index}. ${formatRoleLabel(message.role)}\n\n${message.markdown ?? message.text ?? ""}`);
+    // Do not normalize the assembled document: that would destroy code indentation and blank lines.
+    return sections.join("\n\n") + "\n";
   }
-
-  function formatMarkdown(conversation) {
-    const lines = [
-      `# ${conversation.title}`, "", `- Exported at: ${conversation.exportedAt}`,
-      `- Source: ${conversation.url}`, `- Messages: ${conversation.messageCount}`, ""
-    ];
-    conversation.messages.forEach((message) => {
-      lines.push(`## ${message.index}. ${formatRoleLabel(message.role)}`, "", message.markdown || message.text || "", "");
-    });
-    return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
+  function formatText(conversation, options = {}) {
+    const sections = [safeLine(conversation.title)];
+    if (options.includeMetadata !== false) sections.push(`Exported at: ${conversation.exportedAt || ""}\nSource: ${conversation.url || ""}\nMessages: ${conversation.messageCount}`);
+    if (conversation.warnings?.length) sections.push(conversation.warnings.join("\n"));
+    for (const message of conversation.messages) sections.push(`[${message.index}] ${formatRoleLabel(message.role)}\n${message.text ?? message.markdown ?? ""}`);
+    return sections.join("\n\n") + "\n";
   }
-
-  function formatText(conversation) {
-    const lines = [conversation.title, `Exported at: ${conversation.exportedAt}`, `Source: ${conversation.url}`, `Messages: ${conversation.messageCount}`, ""];
-    conversation.messages.forEach((message) => {
-      lines.push(`[${message.index}] ${formatRoleLabel(message.role)}`, message.text || message.markdown || "", "");
-    });
-    return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
+  function formatJson(value) { return JSON.stringify(value, null, 2) + "\n"; }
+  function failuresText(archive) {
+    return (archive.failures || []).map((failure) => `${safeLine(failure.title)} (${safeLine(failure.id)}): ${safeLine(failure.error)}`).join("\n");
   }
-
-  function formatJson(value) { return `${JSON.stringify(value, null, 2)}\n`; }
-
-  function formatConversationForGptImport(conversation, conversationIndex) {
-    const lines = [`## Conversation ${conversationIndex + 1}: ${conversation.title}`, ""];
-    if (conversation.url) lines.push(`- URL: ${conversation.url}`);
-    if (conversation.createTime) lines.push(`- Created: ${conversation.createTime}`);
-    if (conversation.updateTime) lines.push(`- Updated: ${conversation.updateTime}`);
-    lines.push(`- Messages: ${conversation.messageCount}`, "");
-    conversation.messages.forEach((message) => {
-      lines.push(`### ${message.index}. ${formatRoleLabel(message.role)}`, "", message.markdown || message.text || "", "");
-    });
-    return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n\n`;
+  function formatAllMarkdown(archive, options = {}) {
+    return [`# ChatGPT Archive\n\nExported: ${archive.totalConversations}; requested: ${archive.requestedConversations}; failed: ${archive.failedConversations}`,
+      warningLines(archive), ...archive.conversations.map((conversation) => formatMarkdown(conversation, options)),
+      ...(archive.failures?.length ? [`## Failed Conversations\n\n${failuresText(archive)}`] : [])].join("\n\n") + "\n";
   }
-
-  function buildGptImportIntro(summaryLines) {
-    return [
-      "# GPT Import Bundle", "",
-      "This file is intended to be uploaded into ChatGPT, a Project, or GPT knowledge as reference material.",
-      "It is not a native ChatGPT history restore file.", "", "Recommended prompt after upload:",
-      "\"Use this file as prior conversation history and answer based on it. When useful, cite the conversation title and message number.\"",
-      "", ...summaryLines, ""
-    ].join("\n");
+  function formatAllText(archive, options = {}) {
+    return [`ChatGPT Archive\nExported: ${archive.totalConversations}; requested: ${archive.requestedConversations}; failed: ${archive.failedConversations}`,
+      ...(archive.warnings || []), ...archive.conversations.map((conversation) => formatText(conversation, options)),
+      ...(archive.failures?.length ? [`Failed Conversations\n${failuresText(archive)}`] : [])].join("\n\n") + "\n";
   }
-
-  function formatConversationAsGptImport(conversation) {
-    return (`${buildGptImportIntro([
-      `- Title: ${conversation.title}`, `- Exported at: ${conversation.exportedAt}`,
-      `- Source: ${conversation.url}`, `- Messages: ${conversation.messageCount}`
-    ])}\n${formatConversationForGptImport(conversation, 0)}`).replace(/\n{3,}/g, "\n\n").trim() + "\n";
-  }
-
-  function buildArchiveGptImportFiles(archive, baseName) {
+  function buildArchiveGptImportFiles(archive, baseName, options = {}) {
+    const limit = options.bundleTargetChars || GPT_UPLOAD_TARGET_CHARS;
+    const intro = "# Conversation reference bundle\n\n参考材料，不是原生聊天恢复文件。\n\n" + warningLines(archive) + "\n\n";
     const files = [];
-    const headerLines = [
-      `- Exported at: ${archive.exportedAt}`, `- Source: ${archive.source}`,
-      `- Conversations exported: ${archive.totalConversations}`, `- Conversations requested: ${archive.requestedConversations}`,
-      `- Conversations failed: ${archive.failedConversations}`
-    ];
-    let partNumber = 1;
-    let current = buildGptImportIntro(headerLines);
-    archive.conversations.forEach((conversation, index) => {
-      const section = formatConversationForGptImport(conversation, index);
-      if (current.length + section.length > GPT_UPLOAD_TARGET_CHARS && current.length) {
-        files.push({ filename: `${baseName}-gpt-import-part-${String(partNumber).padStart(2, "0")}.md`, mimeType: "text/markdown;charset=utf-8", content: `${current.trim()}\n` });
-        partNumber += 1;
-        current = buildGptImportIntro([...headerLines, `- File part: ${partNumber}`]);
-      }
-      current += section;
-    });
-    if (archive.failures.length) {
-      current += "## Failed Conversations\n\n";
-      archive.failures.forEach((failure, index) => { current += `${index + 1}. ${failure.title} (${failure.id})\n   ${failure.error}\n`; });
+    let current = intro;
+    let hasContent = false;
+    const flush = () => {
+      if (!hasContent) return;
+      files.push({ content: current, filename: `${baseName}-part-${String(files.length + 1).padStart(2, "0")}.md`, mimeType: "text/markdown;charset=utf-8" });
+      current = intro; hasContent = false;
+    };
+    for (const conversation of archive.conversations) for (const message of conversation.messages) {
+      const section = `## ${safeTitle(conversation.title)} / ${message.index}. ${formatRoleLabel(message.role)}\n\n` +
+        (options.includeMetadata !== false ? `Source: ${conversation.url || ""}\n\n` : "") +
+        (conversation.warnings?.length ? warningLines(conversation) + "\n\n" : "") +
+        (message.markdown ?? message.text ?? "") + "\n\n";
+      if (hasContent && current.length + section.length > limit) flush();
+      // Soft target: keep an oversized single message intact rather than breaking a formula/code fence.
+      if (intro.length + section.length > limit) current += "> 单条消息超过分片目标，已完整保留。\n\n";
+      current += section; hasContent = true;
     }
-    files.push({ filename: `${baseName}-gpt-import-part-${String(partNumber).padStart(2, "0")}.md`, mimeType: "text/markdown;charset=utf-8", content: `${current.trim()}\n` });
+    if (archive.failures?.length) {
+      const section = "## Failed Conversations\n\n" + failuresText(archive) + "\n";
+      if (hasContent && current.length + section.length > limit) flush();
+      current += section; hasContent = true;
+    }
+    flush();
     return files;
   }
-
-  function formatAllMarkdown(archive) {
-    const lines = [
-      "# ChatGPT Archive", "", `- Exported at: ${archive.exportedAt}`, `- Source: ${archive.source}`,
-      `- Conversations: ${archive.totalConversations}`, `- Requested: ${archive.requestedConversations}`, `- Failed: ${archive.failedConversations}`, ""
-    ];
-    archive.conversations.forEach((conversation, index) => {
-      lines.push(`## ${index + 1}. ${conversation.title}`, "", `- URL: ${conversation.url}`);
-      if (conversation.createTime) lines.push(`- Created: ${conversation.createTime}`);
-      if (conversation.updateTime) lines.push(`- Updated: ${conversation.updateTime}`);
-      lines.push(`- Messages: ${conversation.messageCount}`, "");
-      conversation.messages.forEach((message) => lines.push(`### ${message.index}. ${formatRoleLabel(message.role)}`, "", message.markdown || message.text || "", ""));
-    });
-    if (archive.failures.length) {
-      lines.push("## Failed Conversations", "");
-      archive.failures.forEach((failure, index) => lines.push(`${index + 1}. ${failure.title} (${failure.id})`, `   ${failure.error}`));
-    }
-    return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
-  }
-
-  function formatAllText(archive) {
-    const lines = [
-      "ChatGPT Archive", `Exported at: ${archive.exportedAt}`, `Source: ${archive.source}`,
-      `Conversations: ${archive.totalConversations}`, `Requested: ${archive.requestedConversations}`, `Failed: ${archive.failedConversations}`, ""
-    ];
-    archive.conversations.forEach((conversation, index) => {
-      lines.push(`[Conversation ${index + 1}] ${conversation.title}`, `URL: ${conversation.url}`, `Messages: ${conversation.messageCount}`, "");
-      conversation.messages.forEach((message) => lines.push(`[${message.index}] ${formatRoleLabel(message.role)}`, message.text || message.markdown || "", ""));
-    });
-    return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
-  }
-
   function createDownload(content, filename, mimeType) {
-    const blob = new Blob([content], { type: mimeType });
-    const objectUrl = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
     const link = global.document.createElement("a");
-    link.href = objectUrl;
-    link.download = filename;
-    global.document.body.appendChild(link);
-    link.click();
-    link.remove();
-    global.setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
+    try {
+      link.href = url; link.download = filename;
+      global.document.body.appendChild(link); link.click();
+    } finally { link.remove(); global.setTimeout(() => URL.revokeObjectURL(url), 5000); }
   }
-
-  function buildExportPayload(format, conversation) {
-    if (!conversation?.messageCount) throw new Error("No conversation messages found on this page.");
-    const baseName = `${slugifyTitle(conversation.title)}-${timestampForFile(conversation.exportedAt)}`;
-    if (format === "json") return { content: formatJson(conversation), filename: `${baseName}.json`, mimeType: "application/json;charset=utf-8" };
-    if (format === "txt") return { content: formatText(conversation), filename: `${baseName}.txt`, mimeType: "text/plain;charset=utf-8" };
-    if (format === "gptbundle") return { content: formatConversationAsGptImport(conversation), filename: `${baseName}-gpt-import.md`, mimeType: "text/markdown;charset=utf-8" };
-    return { content: formatMarkdown(conversation), filename: `${baseName}.md`, mimeType: "text/markdown;charset=utf-8" };
-  }
-
-  function getExportPayload(format, doc) { return buildExportPayload(format, collectConversation(doc)); }
-  async function getCurrentExportPayload(format, doc) { return buildExportPayload(format, await collectCurrentConversation(doc)); }
-
-  async function getArchiveExportPayload(format) {
-    const archive = await collectAllConversations();
-    const baseName = `chatgpt-archive-${timestampForFile(archive.exportedAt)}`;
-    if (format === "json") return { content: formatJson(archive), filename: `${baseName}.json`, mimeType: "application/json;charset=utf-8" };
-    if (format === "txt") return { content: formatAllText(archive), filename: `${baseName}.txt`, mimeType: "text/plain;charset=utf-8" };
+  function buildExportPayload(format, value, options = {}, archive = false) {
+    if (!["markdown", "json", "txt", "gptbundle"].includes(format)) throw new TypeError("Unknown export format");
+    if (!archive && !value.messageCount) throw errorWith("没有可导出的正文", "EMPTY");
+    const base = `${archive ? "chatgpt-archive" : slugifyTitle(value.title)}-${timestampForFile(value.exportedAt)}`;
+    const info = { acquisition: archive ? "api" : value.acquisition, partial: value.partial || false,
+      warnings: value.warnings || [], messageCount: archive ? value.conversations.reduce((n, item) => n + item.messageCount, 0) : value.messageCount,
+      conversationCount: archive ? value.totalConversations : 1, failedConversations: value.failedConversations || 0 };
     if (format === "gptbundle") {
-      const files = buildArchiveGptImportFiles(archive, baseName);
-      return { files, detail: files.length === 1 ? files[0].filename : `${files.length} GPT import files` };
+      const bundle = archive ? value : { ...value, conversations: [value], failures: [] };
+      const files = buildArchiveGptImportFiles(bundle, base, options);
+      return files.length === 1 ? { ...files[0], info } : { files, info };
     }
-    return { content: formatAllMarkdown(archive), filename: `${baseName}.md`, mimeType: "text/markdown;charset=utf-8" };
+    const content = format === "json" ? formatJson(value) : format === "txt" ? (archive ? formatAllText : formatText)(value, options) : (archive ? formatAllMarkdown : formatMarkdown)(value, options);
+    return { content, filename: `${base}.${format === "markdown" ? "md" : format}`, mimeType: format === "json" ? "application/json;charset=utf-8" : `text/${format === "txt" ? "plain" : "markdown"};charset=utf-8`, info };
   }
-
-  global.ChatGPTExporter = {
-    collectConversation,
-    collectCurrentConversation,
-    collectAllConversations,
-    createDownload,
-    extractMessagesFromApiConversation,
-    fetchConversationDetail,
-    fetchJson,
-    formatAllMarkdown,
-    formatAllText,
-    formatJson,
-    formatMarkdown,
-    formatText,
-    getArchiveExportPayload,
-    getConversationIdFromLocation,
-    getConversationTitle,
-    getCurrentExportPayload,
-    getExportPayload,
-    slugifyTitle
-  };
+  function getExportPayload(format, doc, options = {}) { return buildExportPayload(format, collectConversation(doc), options); }
+  async function getCurrentExportPayload(format, doc, options = {}) { return buildExportPayload(format, await collectCurrentConversation(doc, options), options); }
+  async function getArchiveExportPayload(format, options = {}) { return buildExportPayload(format, await collectAllConversations(options), options, true); }
+  global.ChatGPTExporter = { collectConversation, collectCurrentConversation, collectAllConversations, createDownload,
+    extractMessagesFromApiConversation, fetchConversationDetail, fetchAllConversationSummaries, fetchJson,
+    formatAllMarkdown, formatAllText, formatJson, formatMarkdown, formatText, buildArchiveGptImportFiles, buildExportPayload,
+    getArchiveExportPayload, getConversationIdFromLocation, getConversationTitle, getCurrentExportPayload, getExportPayload, slugifyTitle };
 })(globalThis);

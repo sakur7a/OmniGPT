@@ -242,7 +242,8 @@ class ClipboardTests(unittest.TestCase):
     def test_20_quote_option_persists_without_default_patching(self):
         self.fixture(katex('x_1',False))
         self.page.locator('.omnigpt-launcher').click()
-        checkbox = self.page.locator('.omnigpt-setting input')
+        self.page.locator('#omnigpt-root summary').click()
+        checkbox = self.page.locator('[data-field=quote]')
         self.assertFalse(checkbox.is_checked())
         checkbox.check()
         self.assertTrue(self.page.evaluate('OmniGPTClipboard.quoteCompatibility'))

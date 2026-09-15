@@ -1,12 +1,11 @@
 {
   "name": "omnigpt-userscript",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
     "verify:release": "node scripts/verify-release.mjs",
-    "check": "npm run build && npm run verify:release && node --check OmniGPT.user.js && node --test",
-    "test:browser": "python test/browser-regression.py"
+    "check": "npm run build && npm run verify:release && node --check OmniGPT.user.js && node --test"
   }
 }

@@ -42,7 +42,7 @@ jobs:
       - name: Build, verify and test
         run: npm run check
 
-      - name: Real Chromium clipboard and lightweight-mode regressions
+      - name: Real Chromium clipboard, export and lightweight UI regressions
         shell: bash
         run: |
           python3 -m venv /tmp/omnigpt-browser-tests
@@ -50,6 +50,7 @@ jobs:
           python -m pip install --disable-pip-version-check playwright==1.57.0
           python -m playwright install --with-deps chromium
           python test/browser-regression.py
+          python test/browser-v030.py
 
       - name: Read release version
         id: release

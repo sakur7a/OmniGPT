@@ -1,11 +1,9 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { version } = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8"));
-const sources = await Promise.all(["clipboard.js", "exporter.js", "omnigpt.js"].map((file) =>
-  readFile(path.join(projectRoot, "src", file), "utf8")));
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const { version } = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+const modules = await Promise.all(["clipboard", "exporter", "omnigpt"].map(name => readFile(path.join(root, "src", `${name}.js`), "utf8")));
 const metadata = `// ==UserScript==
 // @name         OmniGPT - ChatGPT Export & LaTeX Copy
 // @name:zh-CN   OmniGPT - ChatGPT 对话导出与 LaTeX 复制
@@ -25,6 +23,6 @@ const metadata = `// ==UserScript==
 // @noframes
 // @grant        none
 // ==/UserScript==`;
-const output = `${metadata}\n\n${sources.map((source) => source.trim()).join("\n\n")}\n`;
-await writeFile(path.join(projectRoot, "OmniGPT.user.js"), output, "utf8");
+const output = `${metadata}\n\nglobalThis.OmniGPTVersion = ${JSON.stringify(version)};\n\n${modules.map(s => s.trim()).join("\n\n")}\n`;
+await writeFile(path.join(root, "OmniGPT.user.js"), output, "utf8");
 console.log(`Built OmniGPT.user.js (${Buffer.byteLength(output)} bytes)`);
