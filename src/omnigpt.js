@@ -172,7 +172,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     try {
       const payload = all ? await exporter.getArchiveExportPayload(format, options) : await exporter.getCurrentExportPayload(format, document, options);
       if (controller.signal.aborted) return;
-      if (action === "copy") await clipboard.writeText(payload.content);
+      if (action === "copy") await clipboard.writeText(clipboard.normalizeMarkdownMath(payload.content));
       else if (payload.files?.length) {
         for (const file of payload.files) {
           const save = button(file.filename, "part");
