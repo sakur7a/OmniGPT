@@ -129,7 +129,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     style.select.value = clipboard.mathStyle;
     const quote = checkbox("引用兼容（默认关闭）", "quote", clipboard.quoteCompatibility);
     details.append(source.label, limit.label, metadata.label, style.label,
-      element("p", "omnigpt-hint", "自动保留行内/独立公式。Alt＋双击只复制 TeX。此选项不改写 API 导出原文。"),
+      element("p", "omnigpt-hint", "Ctrl+C、双击和可识别的回复复制按钮按此格式复制。面板「复制 Markdown」固定使用 Markdown 公式分隔符；下载导出保留 API 原文。Alt＋双击仅复制 TeX。"),
       quote.label, element("p", "omnigpt-hint", "仅需原生选区引用时开启。默认不改写浏览器选区方法。"));
     const actions = element("div", "omnigpt-actions");
     const download = button("导出文件", "export"); const copy = button("复制 Markdown", "copy"); const cancel = button("取消", "cancel"); cancel.hidden = true;
