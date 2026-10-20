@@ -94,7 +94,7 @@
         if (end >= 0) {
           const tex = input.slice(i + 2, end);
           if (tex.trim()) {
-            result += inline ? "$" + tex + "$" : "$\n" + tex.trim() + "\n$";
+            result += inline ? "$" + tex + "$" : "$" + "$" + "\n" + tex.trim() + "\n" + "$" + "$";
             i = end + 2;
             continue;
           }
