@@ -37,12 +37,12 @@ test("export formatters keep markdown and metadata", () => {
   assert.equal(exporter.slugifyTitle("  Omni GPT / 测试  "), "omni-gpt-测试");
   assert.equal(JSON.parse(exporter.formatJson(conversation)).messageCount, 1);
 });
-test("current conversation prefers API mapping and extracts active branch", async () => {
+test("current conversation accepts a mapping response at the updated endpoint", async () => {
   const calls = [];
   const fetch = async (url) => {
     calls.push(String(url));
     if (String(url).endsWith("/api/auth/session")) return jsonResponse(200, { accessToken: "token" });
-    if (String(url).includes("/backend-api/conversation/test-id")) return jsonResponse(200, {
+    if (String(url).includes("/backend-api/conversations/test-id")) return jsonResponse(200, {
       id: "test-id", title: "API title", current_node: "a2", mapping: {
         u1: { parent: null, message: { author: { role: "user" }, content: { parts: ["hello"] }, create_time: 1 } },
         a2: { parent: "u1", message: { author: { role: "assistant" }, content: { parts: ["world"] }, create_time: 2 } }
@@ -53,7 +53,7 @@ test("current conversation prefers API mapping and extracts active branch", asyn
   const conversation = await exporter.collectCurrentConversation({ title: "DOM title" });
   assert.equal(conversation.title, "API title");
   assert.deepEqual(Array.from(conversation.messages, (message) => message.text), ["hello", "world"]);
-  assert.ok(calls.some((url) => url.includes("/backend-api/conversation/test-id")));
+  assert.ok(calls.some((url) => url.includes("/backend-api/conversations/test-id")));
 });
 test("404 on authenticated backend request refreshes token once", async () => {
   const authHeaders = [];
@@ -62,7 +62,7 @@ test("404 on authenticated backend request refreshes token once", async () => {
   const fetch = async (url, init = {}) => {
     const value = String(url);
     if (value.endsWith("/api/auth/session")) return jsonResponse(200, { accessToken: ++sessionCount === 1 ? "stale" : "fresh" });
-    if (value.includes("/backend-api/conversation/abc")) {
+    if (value.includes("/backend-api/conversations/abc")) {
       authHeaders.push(init.headers?.authorization || "");
       return ++detailCount === 1 ? jsonResponse(404, "masked auth failure") : jsonResponse(200, { current_node: null, mapping: {} });
     }
