@@ -49,7 +49,7 @@ test("404 retries with refreshed token exactly once",async()=>{
  await e.fetchConversationDetail("test-id");assert.deepEqual(auth,["Bearer old","Bearer new"]);assert.equal(sessions,2);
 });
 test("simultaneous detail reads share session request",async()=>{
- let sessions=0;const {e}=load(async url=>{if(String(url).endsWith("/api/auth/session")){sessions++;await new Promise(r=>setTimeout(r,5));return reply(200,{accessToken:"x"});}return reply(200,detail());});
+ let sessions=0;const {e}=load(async url=>{if(String(url).endsWith("/api/auth/session")){sessions++;await new Promise(r=>setTimeout(r,5));return reply(200,{accessToken:"x"});}return reply(200,{...detail(),id:new URL(url).pathname.split("/").at(-1)});});
  await Promise.all([e.fetchConversationDetail("1"),e.fetchConversationDetail("2")]);assert.equal(sessions,1);
 });
 test("short pages honor has_more and deduplicate overlaps",async()=>{
