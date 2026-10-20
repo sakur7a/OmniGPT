@@ -2,7 +2,7 @@
 // @name         OmniGPT - ChatGPT Export & LaTeX Copy
 // @name:zh-CN   OmniGPT - ChatGPT 对话导出与 LaTeX 复制
 // @namespace    https://github.com/sakur7a/OmniGPT
-// @version      0.3.0
+// @version      0.3.1
 // @description  Export conversations and copy LaTeX as portable plain-text Markdown. Optional quote compatibility.
 // @description:zh-CN 导出对话，复制为保留 LaTeX 的纯文本 Markdown；可选引用兼容。
 // @author       OmniGPT contributors
@@ -18,7 +18,7 @@
 // @grant        none
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.3.0";
+globalThis.OmniGPTVersion = "0.3.1";
 
 (function initClipboard(global) {
   "use strict";
@@ -385,6 +385,8 @@ globalThis.OmniGPTVersion = "0.3.0";
 (function initExporter(global) {
   "use strict";
   const API_PAGE_SIZE = 100;
+  const DETAIL_PAGE_SIZE = 100;
+  const DETAIL_PAGE_LIMIT = 500;
   const DETAIL_FETCH_CONCURRENCY = 2;
   const SESSION_TTL_MS = 4 * 60 * 1000;
   const GPT_UPLOAD_TARGET_CHARS = 900000;
@@ -543,13 +545,89 @@ globalThis.OmniGPTVersion = "0.3.0";
     }
   }
 
+  function unwrapDetail(payload) {
+    for (const candidate of [payload, payload?.conversation, payload?.data?.conversation, payload?.data]) {
+      if (candidate && typeof candidate === "object" && !Array.isArray(candidate) &&
+          (candidate.mapping || Array.isArray(candidate.messages))) return candidate;
+    }
+    return payload;
+  }
+  function assertConversationId(detail, id) {
+    const returned = detail?.conversation_id ?? ((detail?.mapping || detail?.current_node) ? detail?.id : null);
+    if (returned != null && String(returned) !== String(id)) {
+      throw errorWith("接口返回了其他对话的数据，已停止导出", "SCHEMA");
+    }
+  }
+  function assertDetailPage(detail, id) {
+    assertConversationId(detail, id);
+    if (!Array.isArray(detail?.messages) || typeof detail?.page_info?.has_previous_page !== "boolean" ||
+        detail.partial === true || detail.is_partial === true || detail.truncated === true ||
+        detail.is_truncated === true || detail.is_complete === false) {
+      throw errorWith("新版对话分页结构不完整，已停止以避免漏导", "SCHEMA");
+    }
+  }
+  function flatRecord(item) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw errorWith("对话消息结构不可识别", "SCHEMA");
+    const message = Object.hasOwn(item, "message") ? item.message : item;
+    const id = item.id ?? message?.id;
+    if (typeof id !== "string" || !id) throw errorWith("对话消息缺少 ID", "SCHEMA");
+    const keys = ["parent", "parent_id", "parent_message_id"];
+    const owner = keys.some((key) => Object.hasOwn(item, key)) ? item : message;
+    const key = keys.find((key) => Object.hasOwn(owner || {}, key));
+    return { id, message, linked: Boolean(key), parent: key ? (owner[key] || null) : null };
+  }
+  async function fetchPagedDetail(first, id, options = {}) {
+    assertDetailPage(first, id);
+    if (first.page_info.has_next_page === true) {
+      throw errorWith("接口返回的不是最新对话页，已停止以避免漏导", "PAGINATION");
+    }
+    const pages = [first.messages];
+    const seenCursors = new Set();
+    let current = first;
+    for (let page = 1; current.page_info.has_previous_page; page += 1) {
+      checkAbort(options.signal);
+      if (page >= DETAIL_PAGE_LIMIT) throw errorWith("对话分页超过安全上限，已停止以避免漏导", "PAGINATION");
+      const cursor = current.page_info.start_cursor;
+      if (typeof cursor !== "string" || !cursor || seenCursors.has(cursor)) {
+        throw errorWith("对话分页游标缺失或重复，已停止以避免漏导", "PAGINATION");
+      }
+      seenCursors.add(cursor);
+      progress(options, { phase: "detail-pages", page: page + 1, id });
+      const path = `/backend-api/conversations/${encodeURIComponent(id)}?include_has_versions=true&num_turns=${DETAIL_PAGE_SIZE}&before=${encodeURIComponent(cursor)}`;
+      current = unwrapDetail(await fetchJson(path, { ...options, requireAuth: true }));
+      assertDetailPage(current, id);
+      if (!current.messages.length) throw errorWith("对话分页出现空页，已停止以避免漏导", "PAGINATION");
+      pages.unshift(current.messages);
+    }
+    // Pages may share their boundary message. Retain the newest copy, but preserve
+    // chronological order. Never discard a page without checking its cursor.
+    const orderedIds = [];
+    const byId = new Map();
+    for (const page of pages) for (const entry of page) {
+      const record = flatRecord(entry);
+      if (!byId.has(record.id)) orderedIds.push(record.id);
+      byId.set(record.id, entry);
+    }
+    if (!orderedIds.length) throw errorWith("新版接口未返回对话消息", "EMPTY");
+    return { ...first, messages: orderedIds.map((key) => byId.get(key)),
+      page_info: { ...first.page_info, has_previous_page: false, has_next_page: false } };
+  }
   async function fetchConversationDetail(id, options = {}) {
     if (!id) throw errorWith("缺少对话 ID", "SCHEMA");
-    for (const [index, prefix] of ["conversation", "conversations"].entries()) {
+    // The plural route replaced the old mapping-tree endpoint in August 2026.
+    // Only fall back on 404/405, never turn an incomplete 200 response into a silent partial export.
+    for (const [index, prefix] of ["conversations", "conversation"].entries()) {
       try {
-        const result = await fetchJson(`/backend-api/${prefix}/${encodeURIComponent(id)}`, { ...options, requireAuth: true });
-        return result?.conversation?.mapping ? result.conversation : result;
-      } catch (error) { if (index || ![404, 405].includes(error.status)) throw error; }
+        const path = `/backend-api/${prefix}/${encodeURIComponent(id)}` +
+          (index ? "" : `?include_has_versions=true&num_turns=${DETAIL_PAGE_SIZE}`);
+        const detail = unwrapDetail(await fetchJson(path, { ...options, requireAuth: true }));
+        assertConversationId(detail, id);
+        if (Array.isArray(detail?.messages)) return fetchPagedDetail(detail, id, options);
+        if (detail?.mapping && typeof detail.mapping === "object" && !Array.isArray(detail.mapping)) return detail;
+        throw errorWith("对话结构不可识别，已停止以避免漏导", "SCHEMA");
+      } catch (error) {
+        if (index || ![404, 405].includes(error.status)) throw error;
+      }
     }
   }
 
@@ -595,7 +673,8 @@ globalThis.OmniGPTVersion = "0.3.0";
       const message = node.message;
       const role = message?.author?.role;
       if (!["user", "assistant"].includes(role) || message?.metadata?.is_visually_hidden_from_conversation ||
-          ["analysis", "justify", "confidence"].includes(message?.channel) ||
+          ["analysis", "justify", "confidence", "commentary"].includes(message?.channel || message?.metadata?.channel) ||
+          /^(?:thoughts?|reasoning(?:_recap|_summary)?)$/.test(message?.content?.content_type || "") ||
           (role === "assistant" && message.recipient && message.recipient !== "all")) continue;
       if (message?.metadata?.attachments?.length) state.assets = true;
       const content = message.text ?? message.content?.parts ?? message.content?.text ?? message.parts;
@@ -606,9 +685,44 @@ globalThis.OmniGPTVersion = "0.3.0";
     }
     return { messages, warnings: state.assets ? [ASSET_WARNING] : [] };
   }
-  function extractMessagesFromApiConversation(conversation) { return messagesFromNodes(activeNodes(conversation).nodes).messages; }
+  function selectedNodes(detail) {
+    if (!Array.isArray(detail?.messages)) return activeNodes(detail);
+    const records = detail.messages.map(flatRecord);
+    const byId = new Map(records.map((record) => [record.id, record]));
+    if (byId.size !== records.length) throw errorWith("对话消息 ID 重复，已停止导出", "SCHEMA");
+    const current = detail.current_node || detail.current_node_id;
+    const warnings = [];
+    let active = records;
+    if (current) {
+      if (!byId.has(current)) throw errorWith("当前分支尾节点未返回，已停止以避免漏导", "BRANCH");
+      if (records.length && records.every((record) => record.linked)) {
+        active = [];
+        const visited = new Set();
+        let next = current;
+        while (next) {
+          if (visited.has(next) || !byId.has(next)) throw errorWith("当前分支父节点缺失或循环", "BRANCH");
+          visited.add(next);
+          const record = byId.get(next);
+          active.push(record);
+          next = record.parent;
+        }
+        active.reverse();
+      } else {
+        // The current plural API returns the selected branch in chronological order,
+        // often without parent links. Do not combine messages after current_node.
+        active = records.slice(0, records.findIndex((record) => record.id === current) + 1);
+      }
+    } else {
+      warnings.push("新版接口未提供当前分支尾节点，已按其返回的消息顺序导出。");
+    }
+    if (["pending", "streaming", "in_progress"].includes(active.at(-1)?.message?.status)) {
+      throw errorWith("回答仍在生成中，请结束生成后再导出", "IN_PROGRESS");
+    }
+    return { nodes: active.map((record) => ({ id: record.id, message: record.message })), warnings };
+  }
+  function extractMessagesFromApiConversation(conversation) { return messagesFromNodes(selectedNodes(conversation).nodes).messages; }
   function conversationFromApi(detail, summary = {}) {
-    const path = activeNodes(detail);
+    const path = selectedNodes(detail);
     const result = messagesFromNodes(path.nodes);
     if (!result.messages.length) throw errorWith("未找到可导出的用户或助手正文", "EMPTY");
     const id = detail.id || detail.conversation_id || summary.id || summary.conversation_id || "";
@@ -926,6 +1040,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     if (value.phase === "listing") setStatus(`读取历史列表：${value.completed} 条`);
     if (value.phase === "details") setStatus(`读取对话 ${value.completed}/${value.total}；成功 ${value.succeeded}，失败 ${value.failed}`);
     if (value.phase === "current") setStatus(value.source === "api" ? "读取完整对话…" : "读取已加载页面…");
+    if (value.phase === "detail-pages") setStatus(`读取长对话：第 ${value.page} 页…`);
     if (value.phase === "retry") setStatus(`HTTP ${value.status}，有限重试 ${value.attempt}/2…`);
   }
   function syncControls() {
@@ -944,7 +1059,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     panel.hidden = true; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-labelledby", "omnigpt-title");
     const header = element("div", "omnigpt-header");
     const title = element("div", "omnigpt-title", "OmniGPT"); title.id = "omnigpt-title";
-    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.3.0"));
+    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.3.1"));
     const close = button("×", "close"); close.setAttribute("aria-label", "关闭面板");
     header.append(title, close);
     const scope = selectField("导出范围", "scope", [["current", "当前对话"], ["all", "历史对话"]]);
