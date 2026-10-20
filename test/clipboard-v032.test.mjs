@@ -33,24 +33,20 @@ After`;
 });
 
 test("code fences, inline code, indented code and escaped literal delimiters are preserved", () => {
-  const input = String.raw`Outside \(x_i\), ``\(literal\)`` and ```\[\alpha\]```
-
-```python
-expr = "\(x^2\)"
-other = "\[y\]"
-```
-
-    code = "\(z\)"
-escaped \\(literal\\) and real \(q\)`;
-  const expected = String.raw`Outside $x_i$, ``\(literal\)`` and ```\[\alpha\]```
-
-```python
-expr = "\(x^2\)"
-other = "\[y\]"
-```
-
-    code = "\(z\)"
-escaped \\(literal\\) and real $q$`;
+  const input = [
+    String.raw`Outside \(x_i\), ` + "`"+String.raw`\(literal\)` + "` and "``"+String.raw`\[\alpha\]` + "``",
+    "",
+    "```python",
+    String.raw`expr = "\(x^2\)"`,
+    String.raw`other = "\[y\]"`,
+    "```",
+    "",
+    String.raw`    code = "\(z\)"`,
+    String.raw`escaped \\(literal\\) and real \(q\)`
+  ].join("\n");
+  const expected = input
+    .replace(String.raw`\(x_i\)`, String.raw`$x_i$`)
+    .replace(String.raw`\(q\)`, String.raw`$q$`);
   assert.equal(normalizeMarkdownMath(input), expected);
 });
 
