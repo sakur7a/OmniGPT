@@ -34,7 +34,7 @@ After`;
 
 test("code fences, inline code, indented code and escaped literal delimiters are preserved", () => {
   const input = [
-    String.raw`Outside \(x_i\), ` + "`"+String.raw`\(literal\)` + "` and "``"+String.raw`\[\alpha\]` + "``",
+    String.raw`Outside \(x_i\), ` + ["`", String.raw`\(literal\)`, "`", " and ``", String.raw`\[\alpha\]`, "``"].join(""),
     "",
     "```python",
     String.raw`expr = "\(x^2\)"`,
