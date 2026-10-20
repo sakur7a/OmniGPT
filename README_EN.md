@@ -69,7 +69,7 @@ Under **More options → Formula copy**, you can switch to LaTeX delimiters `\(�
 - Selecting only part of a rendered formula still restores the full TeX for that formula, without expanding surrounding prose outside the selection.
 - `G_k` and `G\_k` keep their original meaning; OmniGPT does not rewrite one into the other. If no reliable TeX source is available, spoken accessibility text is not guessed as TeX.
 - The formula-copy setting affects rendered formulas. API exports preserve the source text and its existing delimiters instead of running regex replacements across the whole document.
-- ChatGPT's native response-copy button may bypass the browser `copy` event. For predictable output, use selection copy, double-click, or **Copy Markdown** in the OmniGPT panel.
+- Since v0.3.2, supported ChatGPT reply-copy buttons also use the selected formula-copy style when a formula is detected. Ordinary responses and unknown UI layouts still use native copy. **Copy Markdown** in the OmniGPT panel normalizes recognized API math delimiters to Markdown dollar syntax, without changing downloaded API content.
 
 See [current formula rules and design notes](docs/V0.3.0.md) for details.
 
@@ -116,7 +116,7 @@ You can update from the GitHub install link above, verify the version, then relo
 
 For supported math selections, OmniGPT writes only `text/plain` so that KaTeX HTML and MathML copies do not get mixed into the clipboard item. The destination editor or one of its plugins may still transform that plain text, so OmniGPT cannot guarantee identical rendering in every paste target.
 
-When debugging, first update OmniGPT, reload the source ChatGPT tab, copy again, and make sure you used a selection copy rather than ChatGPT's native response-copy button. Existing clipboard contents are not retroactively fixed by an update.
+When debugging, update OmniGPT, reload ChatGPT, and check **More options → Formula copy**: a previously saved LaTeX style will still use slash-parenthesis delimiters. If the native button is not recognized, use selection Ctrl+C, double-click or OmniGPT's Copy Markdown. Existing clipboard contents are not retroactively fixed by an update.
 
 </details>
 
