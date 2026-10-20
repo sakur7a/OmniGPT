@@ -179,12 +179,11 @@ class BrowserTests(unittest.TestCase):
     def test_24_raw_math_delimiters_in_selection_and_native_button(self):
         self.fixture(r'<p>Result \(5\leq6\leq7\)</p>');self.select()
         self.page.keyboard.press('Control+c')
-        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'),r'Result $5\leq6\leq7
-)
+        expected='Result '+chr(36)+r'5\leq6\leq7'+chr(36)
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'),expected)
         self.fixture(r'<div data-testid="conversation-turn-0"><div class="markdown"><p>Result \(5\leq6\leq7\)</p></div><button data-testid="copy-turn-action-button">Copy</button></div>',True)
         self.page.locator('[data-testid="copy-turn-action-button"]').click()
-        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'),r'Result $5\leq6\leq7
-)
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'),expected)
 
     def test_25_copy_markdown_panel_normalizes_api_math_not_code(self):
         self.page.evaluate(r'''() => {
@@ -204,11 +203,9 @@ class BrowserTests(unittest.TestCase):
         }''')
         self.open()
         self.page.locator('[data-action=copy]').click()
-        self.page.wait_for_function(r'''navigator.clipboard.readText().then(x=>x.includes('$5\\leq6\\leq7
-))''')
+        self.page.wait_for_function("document.querySelector('.omnigpt-status')?.textContent.includes('已复制')")
         pasted=self.page.evaluate('navigator.clipboard.readText()')
-        self.assertIn(r'$5\leq6\leq7
-,pasted)
+        self.assertIn(chr(36)+r'5\leq6\leq7'+chr(36),pasted)
         self.assertIn(r'`\(z\)`',pasted)
         self.assertEqual(self.errors,[])
 
