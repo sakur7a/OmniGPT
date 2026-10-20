@@ -120,7 +120,8 @@ test("incorrect conversation ID and missing current_node fail rather than export
   const mismatch = load(auth(() => reply(200, { ...page([msg("a3", "assistant", "A")], false), conversation_id: "other" })));
   await assert.rejects(mismatch.exporter.fetchConversationDetail("test-id"), err => err.code === "SCHEMA");
   const missing = load(auth(() => reply(200, page([msg("a2", "assistant", "A")], false))));
-  await assert.rejects(missing.exporter.collectCurrentConversation({}), err => err.code === "BRANCH");
+  await assert.rejects(missing.exporter.fetchConversationDetail("test-id").then(d =>
+    missing.exporter.extractMessagesFromApiConversation(d)), err => err.code === "BRANCH");
 });
 
 test("uncompleted generation rejects a flat export instead of writing a misleading file", async () => {
