@@ -95,8 +95,9 @@ test("archive concurrency <=2, successes ordered and failures visible in TXT",as
  const {e}=load(sessionOr(async url=>{
    if(url.includes("conversations?"))return reply(200,{items:[{id:"1"},{id:"2"},{id:"3"}],has_more:false});
    concurrent++;max=Math.max(max,concurrent);await new Promise(r=>setTimeout(r,3));concurrent--;
-   if(url.endsWith("/2"))return reply(200,{});
-   return reply(200,{...detail(url.slice(-1)),id:url.slice(-1)});
+   const id=new URL(url).pathname.split("/").at(-1);
+   if(id==="2")return reply(200,{});
+   return reply(200,{...detail(id),id});
  }));
  const archive=await e.collectAllConversations({onProgress:x=>events.push(x)});
  assert.ok(max<=2);assert.deepEqual(serial(archive.conversations).map(x=>x.id),["1","3"]);assert.equal(archive.failedConversations,1);
