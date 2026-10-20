@@ -86,7 +86,7 @@ Open the panel, choose an **Export scope** and **File format**, then click **Exp
 | **TXT** `.txt` | Plain-text reading and search; Markdown syntax already present in API text may remain |
 | **Reference chunks** `.md` | Splitting long histories into uploadable reference files at message boundaries |
 
-For the current conversation, OmniGPT prefers the API representation of the active branch and falls back to the already-loaded page if needed. You can also choose offline page capture under **More options**. History export can use everything returned by the current conversation list or be limited to the most recent **50 / 200** items.
+For the current conversation, OmniGPT uses the newer paginated API to retrieve the active branch (v0.3.1), falls back to the legacy endpoint if unavailable, and explicitly marks DOM fallback as partial when an API read fails. You can also choose offline page capture under **More options**. History export can use everything returned by the current conversation list or be limited to the most recent **50 / 200** items.
 
 During export, the panel shows progress plus success and failure counts. You can cancel the task, and closing the panel also cancels an in-progress read. When a reference bundle produces multiple parts, they are saved individually rather than triggering a burst of automatic downloads.
 

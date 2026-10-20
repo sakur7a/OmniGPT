@@ -49,7 +49,7 @@ test("404 retries with refreshed token exactly once",async()=>{
  await e.fetchConversationDetail("test-id");assert.deepEqual(auth,["Bearer old","Bearer new"]);assert.equal(sessions,2);
 });
 test("simultaneous detail reads share session request",async()=>{
- let sessions=0;const {e}=load(async url=>{if(String(url).endsWith("/api/auth/session")){sessions++;await new Promise(r=>setTimeout(r,5));return reply(200,{accessToken:"x"});}return reply(200,detail());});
+ let sessions=0;const {e}=load(async url=>{if(String(url).endsWith("/api/auth/session")){sessions++;await new Promise(r=>setTimeout(r,5));return reply(200,{accessToken:"x"});}return reply(200,{...detail(),id:new URL(url).pathname.split("/").at(-1)});});
  await Promise.all([e.fetchConversationDetail("1"),e.fetchConversationDetail("2")]);assert.equal(sessions,1);
 });
 test("short pages honor has_more and deduplicate overlaps",async()=>{
@@ -95,8 +95,9 @@ test("archive concurrency <=2, successes ordered and failures visible in TXT",as
  const {e}=load(sessionOr(async url=>{
    if(url.includes("conversations?"))return reply(200,{items:[{id:"1"},{id:"2"},{id:"3"}],has_more:false});
    concurrent++;max=Math.max(max,concurrent);await new Promise(r=>setTimeout(r,3));concurrent--;
-   if(url.endsWith("/2"))return reply(200,{});
-   return reply(200,{...detail(url.slice(-1)),id:url.slice(-1)});
+   const id=new URL(url).pathname.split("/").at(-1);
+   if(id==="2")return reply(200,{});
+   return reply(200,{...detail(id),id});
  }));
  const archive=await e.collectAllConversations({onProgress:x=>events.push(x)});
  assert.ok(max<=2);assert.deepEqual(serial(archive.conversations).map(x=>x.id),["1","3"]);assert.equal(archive.failedConversations,1);

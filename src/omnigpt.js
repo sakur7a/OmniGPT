@@ -95,6 +95,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     if (value.phase === "listing") setStatus(`读取历史列表：${value.completed} 条`);
     if (value.phase === "details") setStatus(`读取对话 ${value.completed}/${value.total}；成功 ${value.succeeded}，失败 ${value.failed}`);
     if (value.phase === "current") setStatus(value.source === "api" ? "读取完整对话…" : "读取已加载页面…");
+    if (value.phase === "detail-pages") setStatus(`读取长对话：第 ${value.page} 页…`);
     if (value.phase === "retry") setStatus(`HTTP ${value.status}，有限重试 ${value.attempt}/2…`);
   }
   function syncControls() {
@@ -113,7 +114,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     panel.hidden = true; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-labelledby", "omnigpt-title");
     const header = element("div", "omnigpt-header");
     const title = element("div", "omnigpt-title", "OmniGPT"); title.id = "omnigpt-title";
-    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.3.0"));
+    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.3.1"));
     const close = button("×", "close"); close.setAttribute("aria-label", "关闭面板");
     header.append(title, close);
     const scope = selectField("导出范围", "scope", [["current", "当前对话"], ["all", "历史对话"]]);
