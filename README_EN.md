@@ -71,7 +71,7 @@ Under **More options â†’ Formula copy**, you can switch to LaTeX delimiters `\(â
 - The formula-copy setting affects rendered formulas. API exports preserve the source text and its existing delimiters instead of running regex replacements across the whole document.
 - Since v0.3.2, supported ChatGPT reply-copy buttons also use the selected formula-copy style when a formula is detected. Ordinary responses and unknown UI layouts still use native copy. **Copy Markdown** in the OmniGPT panel normalizes recognized API math delimiters to Markdown dollar syntax, without changing downloaded API content.
 
-See [current formula rules and design notes](docs/V0.3.0.md) for details.
+See [v0.3.2 math-copy compatibility](docs/V0.3.2.md) and the [earlier formula rules](docs/V0.3.0.md) for details.
 
 </details>
 
