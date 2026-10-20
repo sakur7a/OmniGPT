@@ -156,4 +156,57 @@ class BrowserTests(unittest.TestCase):
         c=self.page.evaluate('ChatGPTExporter.collectConversation(document)')
         self.assertEqual(c['messageCount'],1);self.assertIn('diagram',c['messages'][0]['markdown'])
 
+    def test_21_native_reply_copy_button_uses_markdown_math(self):
+        self.fixture('<div data-testid="conversation-turn-0" data-turn="assistant"><div class="markdown" id="case"><p>Math '+katex(r'5\leq6\leq7',False)+' done.</p></div><button data-testid="copy-turn-action-button">Copy</button></div>',True)
+        self.page.evaluate("""()=>{window.nativeClicks=0;document.querySelector('[data-testid="copy-turn-action-button"]').addEventListener('click',()=>window.nativeClicks++);}""")
+        self.page.locator('[data-testid="copy-turn-action-button"]').click()
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'),r'Math $5\leq6\leq7$ done.')
+        self.assertEqual(self.page.evaluate('nativeClicks'),0)
+
+    def test_22_native_reply_copy_button_leaves_plain_responses_alone(self):
+        self.fixture('<div data-testid="conversation-turn-0"><div class="markdown" id="case"><p>ordinary prose</p></div><button data-testid="copy-turn-action-button">Copy</button></div>',True)
+        self.page.evaluate("""()=>{window.nativeClicks=0;document.querySelector('[data-testid="copy-turn-action-button"]').addEventListener('click',()=>{window.nativeClicks++;void navigator.clipboard.writeText('native path');});}""")
+        self.page.locator('[data-testid="copy-turn-action-button"]').click()
+        self.page.wait_for_function("navigator.clipboard.readText().then(text => text === 'native path')")
+        self.assertEqual(self.page.evaluate('nativeClicks'),1)
+
+    def test_23_native_button_respects_explicit_latex_style(self):
+        self.fixture('<div data-testid="conversation-turn-0"><div class="markdown"><p>'+katex(r'5\leq6\leq7',False)+'</p></div><button data-testid="copy-turn-action-button">Copy</button></div>',True)
+        self.page.evaluate('OmniGPTClipboard.setMathStyle("latex")')
+        self.page.locator('[data-testid="copy-turn-action-button"]').click()
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'),r'\(5\leq6\leq7\)')
+
+    def test_24_raw_math_delimiters_in_selection_and_native_button(self):
+        self.fixture(r'<p>Result \(5\leq6\leq7\)</p>');self.select()
+        self.page.keyboard.press('Control+c')
+        expected='Result '+chr(36)+r'5\leq6\leq7'+chr(36)
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'),expected)
+        self.fixture(r'<div data-testid="conversation-turn-0"><div class="markdown"><p>Result \(5\leq6\leq7\)</p></div><button data-testid="copy-turn-action-button">Copy</button></div>',True)
+        self.page.locator('[data-testid="copy-turn-action-button"]').click()
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'),expected)
+
+    def test_25_copy_markdown_panel_normalizes_api_math_not_code(self):
+        self.page.evaluate(r'''() => {
+            window.fetch = async (url) => {
+                if (String(url).endsWith('/api/auth/session'))
+                    return {ok:true,status:200,json:async()=>({accessToken:'token'})};
+                return {ok:true,status:200,json:async()=>({
+                    conversation_id:'test-id',title:'Formula',
+                    current_node:'a',page_info:{has_previous_page:false,has_next_page:false},
+                    messages:[
+                        {id:'u',author:{role:'user'},content:{parts:['Question']}},
+                        {id:'a',author:{role:'assistant'},
+                         content:{parts:['Value \\(5\\leq6\\leq7\\) and code `\\(z\\)`']}}
+                    ]
+                })};
+            };
+        }''')
+        self.open()
+        self.page.locator('[data-action=copy]').click()
+        self.page.wait_for_function("document.querySelector('.omnigpt-status')?.textContent.includes('已复制')")
+        pasted=self.page.evaluate('navigator.clipboard.readText()')
+        self.assertIn(chr(36)+r'5\leq6\leq7'+chr(36),pasted)
+        self.assertIn(r'`\(z\)`',pasted)
+        self.assertEqual(self.errors,[])
+
 if __name__=='__main__':unittest.main(verbosity=2)

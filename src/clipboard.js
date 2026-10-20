@@ -34,6 +34,78 @@
     return formula.display ? `$$\n${formula.tex}\n$$` : `$${formula.tex}$`;
   }
 
+  function isEscaped(text, index) {
+    let slashes = 0;
+    for (let i = index - 1; i >= 0 && text[i] === "\\"; i -= 1) slashes += 1;
+    return slashes % 2 === 1;
+  }
+
+  // Change LaTeX delimiters only in Markdown prose. Code blocks, code spans
+  // and escaped literal backslashes must remain byte-for-byte unchanged.
+  function normalizeMarkdownMath(source) {
+    const input = String(source ?? "");
+    let result = "";
+    let i = 0;
+    let codeTicks = 0;
+    let fence = null;
+    while (i < input.length) {
+      if ((i === 0 || input[i - 1] === "\n") && !codeTicks) {
+        const lineEnd = input.indexOf("\n", i);
+        const end = lineEnd < 0 ? input.length : lineEnd;
+        const line = input.slice(i, end);
+        const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+        if (marker) {
+          const sequence = marker[1];
+          if (!fence) fence = { symbol: sequence[0], length: sequence.length };
+          else if (sequence[0] === fence.symbol && sequence.length >= fence.length &&
+              /^\s*$/.test(marker[2])) fence = null;
+          result += line;
+          i = end;
+          continue;
+        }
+        if (fence || /^(?: {4}|\t)/.test(line)) {
+          result += line;
+          i = end;
+          continue;
+        }
+      }
+      if (input[i] === "`" && !isEscaped(input, i)) {
+        let end = i + 1;
+        while (input[end] === "`") end += 1;
+        const length = end - i;
+        if (!codeTicks) codeTicks = length;
+        else if (codeTicks === length) codeTicks = 0;
+        result += input.slice(i, end);
+        i = end;
+        continue;
+      }
+      if (!fence && !codeTicks && input[i] === "\\" &&
+          ["(", "["].includes(input[i + 1]) && !isEscaped(input, i)) {
+        const inline = input[i + 1] === "(";
+        const closer = inline ? ")" : "]";
+        let end = -1;
+        for (let j = i + 2; j < input.length - 1; j += 1) {
+          if (inline && input[j] === "\n") break;
+          if (input[j] === "\\" && input[j + 1] === closer && !isEscaped(input, j)) {
+            end = j;
+            break;
+          }
+        }
+        if (end >= 0) {
+          const tex = input.slice(i + 2, end);
+          if (tex.trim()) {
+            result += inline ? "$" + tex + "$" : "$" + "$" + "\n" + tex.trim() + "\n" + "$" + "$";
+            i = end + 2;
+            continue;
+          }
+        }
+      }
+      result += input[i];
+      i += 1;
+    }
+    return result;
+  }
+
   function setMathStyle(style, persist = true) {
     if (!["markdown", "latex"].includes(style)) throw new TypeError("Unknown formula style");
     mathStyle = style;
@@ -258,13 +330,60 @@
   function handleCopy(event) {
     if (copyFallbackActive || !event.clipboardData || elementOf(event.target)?.closest(EDITABLE)) return;
     try {
-      const payload = selectionPayload(global.getSelection());
-      if (!payload?.mathCount || !payload.text) return;
+      const selection = global.getSelection();
+      const payload = selectionPayload(selection);
+      let text = payload?.mathCount ? payload.text : "";
+      if (!text && mathStyle === "markdown" && selection?.rangeCount === 1) {
+        const range = selection.getRangeAt(0);
+        const container = elementOf(range.commonAncestorContainer);
+        // Preserve native copy of code and anything outside a real message.
+        if (eligibleRange(range) && !container?.closest("pre, code") &&
+            !container?.querySelector?.("pre, code")) {
+          const original = selection.toString();
+          const converted = normalizeMarkdownMath(original);
+          if (converted !== original) text = converted;
+        }
+      }
+      if (!text) return;
       event.clipboardData.clearData();
-      event.clipboardData.setData("text/plain", payload.text);
+      event.clipboardData.setData("text/plain", text);
       event.preventDefault();
       event.stopImmediatePropagation();
     } catch (_) { /* Leave native copy available on unexpected DOM changes. */ }
+  }
+
+  // ChatGPT's native reply-copy button normally writes clipboard data via
+  // navigator.clipboard.writeText, which does not fire a browser copy event.
+  // Handle only the known reply action, and leave unsupported turns untouched.
+  function handleNativeTurnCopy(event, onCopied) {
+    if (event.defaultPrevented || (event.button !== 0 && event.detail !== 0)) return;
+    const button = elementOf(event.target)?.closest('button[data-testid="copy-turn-action-button"]');
+    if (!button || button.closest("#omnigpt-root")) return;
+    const turn = button.closest('[data-testid^="conversation-turn-"]');
+    if (!turn) return;
+    const markdownBlocks = turn.querySelectorAll(".markdown");
+    const content = markdownBlocks.length === 1 ? markdownBlocks[0] :
+      turn.querySelector('[data-message-author-role="assistant"]');
+    if (!content) return;
+
+    const rendered = serializeElement(content, { mathStyle });
+    let text = "";
+    if (rendered?.mathCount && rendered.text) {
+      text = rendered.text;
+    } else if (mathStyle === "markdown" && !content.querySelector("pre, code")) {
+      // Some response bodies show literal math delimiters, not renderer nodes.
+      // Only override the native action if there is a real delimiter to change.
+      const original = content.innerText || content.textContent || "";
+      const converted = normalizeMarkdownMath(original);
+      if (converted === original) return;
+      text = converted;
+    } else return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void writeText(text)
+      .then(() => onCopied("已复制公式（" + (mathStyle === "markdown" ? "Markdown $ / $" : "LaTeX") + "）"))
+      .catch(() => onCopied("复制失败，请检查剪贴板权限"));
   }
 
   async function writeText(text) {
@@ -337,6 +456,7 @@
     if (installed) return;
     installed = true;
     global.addEventListener("copy", handleCopy, true);
+    global.addEventListener("click", (event) => handleNativeTurnCopy(event, onCopied), true);
     global.addEventListener("dblclick", (event) => {
       const target = elementOf(event.target);
       if (!target?.closest(MESSAGE) || target.closest(EDITABLE)) return;
@@ -356,6 +476,6 @@
   }
 
   global.OmniGPTClipboard = Object.freeze({ install, handleCopy, selectionPayload, serializeRange, serializeElement,
-    readFormula, unwrapTex, formatFormula, writeText, setMathStyle, get mathStyle() { return mathStyle; },
+    readFormula, unwrapTex, formatFormula, normalizeMarkdownMath, writeText, setMathStyle, get mathStyle() { return mathStyle; },
     setQuoteCompatibility, get quoteCompatibility() { return quoteEnabled; } });
 })(globalThis);
