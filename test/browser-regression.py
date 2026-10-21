@@ -214,7 +214,7 @@ class ClipboardTests(unittest.TestCase):
     def test_15_double_click_plain_only(self):
         self.fixture(katex('x_i'))
         self.page.locator('.glyph').dblclick()
-        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'), '$$\nx_i\n$$')
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()').replace('\r\n', '\n'), '$$\nx_i\n$$')
         self.assertEqual(self.page.evaluate('navigator.clipboard.read().then(items => items.flatMap(item => item.types))'), ['text/plain'])
 
     def test_16_clears_preexisting_rich_formats(self):

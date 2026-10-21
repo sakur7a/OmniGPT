@@ -68,10 +68,10 @@ $$
 
 - 选中公式的一部分，也会恢复该公式的完整 TeX；不扩展选区外的普通正文。
 - `G_k` 与 `G\_k` 保持原义，不擅自互换。没有可靠源码时，不把公式朗读标签当成 TeX。
-- 此设置控制渲染公式的复制。API 导出保留原文已有定界符，不对整篇正文做正则替换。
+- 此设置控制页面公式的复制。API 导出保留原文已有定界符，不对整篇正文做正则替换。
 - 自 v0.3.2 起，已识别的 ChatGPT 回复原生复制按钮在检测到公式时也会采用「公式复制」设置；普通回复和未识别的页面布局仍走原生行为。面板中的**复制 Markdown** 会将 API 原文的数学分隔符转换为 Markdown 美元符格式，不改变下载导出的原始正文。
 
-详见 [v0.3.2 公式复制修复说明](docs/V0.3.2.md) 和 [原有公式规则](docs/V0.3.0.md)。
+当前页面结构与混合公式修复见 [0.3.4 修复说明](docs/V0.3.4.md)。此前行为见 [v0.3.2 公式复制修复说明](docs/V0.3.2.md) 和 [原有公式规则](docs/V0.3.0.md)。
 
 </details>
 
@@ -158,6 +158,7 @@ python -m pip install playwright==1.57.0
 python -m playwright install chromium
 python test/browser-regression.py
 python test/browser-v030.py
+python test/browser-current-dom.py
 ```
 
 核心源码：`src/clipboard.js` 处理复制，`src/exporter.js` 处理采集与导出，`src/omnigpt.js` 负责面板。CI 会在发布前执行 Node 和浏览器回归测试。

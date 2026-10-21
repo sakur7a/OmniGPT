@@ -68,10 +68,10 @@ Under **More options â†’ Formula copy**, you can switch to LaTeX delimiters `\(â
 
 - Selecting only part of a rendered formula still restores the full TeX for that formula, without expanding surrounding prose outside the selection.
 - `G_k` and `G\_k` keep their original meaning; OmniGPT does not rewrite one into the other. If no reliable TeX source is available, spoken accessibility text is not guessed as TeX.
-- The formula-copy setting affects rendered formulas. API exports preserve the source text and its existing delimiters instead of running regex replacements across the whole document.
+- The formula-copy setting affects formulas copied from the page. API exports preserve the source text and its existing delimiters instead of running regex replacements across the whole document.
 - Since v0.3.2, supported ChatGPT reply-copy buttons also use the selected formula-copy style when a formula is detected. Ordinary responses and unknown UI layouts still use native copy. **Copy Markdown** in the OmniGPT panel normalizes recognized API math delimiters to Markdown dollar syntax, without changing downloaded API content.
 
-See [v0.3.2 math-copy compatibility](docs/V0.3.2.md) and the [earlier formula rules](docs/V0.3.0.md) for details.
+See the [0.3.4 current-DOM repair](docs/V0.3.4.md), [v0.3.2 math-copy compatibility](docs/V0.3.2.md) and the [earlier formula rules](docs/V0.3.0.md) for details.
 
 </details>
 
@@ -158,6 +158,7 @@ python -m pip install playwright==1.57.0
 python -m playwright install chromium
 python test/browser-regression.py
 python test/browser-v030.py
+python test/browser-current-dom.py
 ```
 
 Core files: `src/clipboard.js` handles copying, `src/exporter.js` handles collection and export, and `src/omnigpt.js` owns the panel. CI runs both Node and browser regressions before a release is published.

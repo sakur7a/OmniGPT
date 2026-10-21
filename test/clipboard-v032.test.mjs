@@ -61,3 +61,13 @@ test("Math-style preference is still explicit for rendered formulas", () => {
   assert.equal(formatFormula(formula, "markdown"), String.raw`$5\leq6\leq7$`);
   assert.equal(formatFormula(formula, "latex"), String.raw`\(5\leq6\leq7\)`);
 });
+
+test("repeated normalization preserves math, ordinary text and code", () => {
+  const input = String.raw`Text \(5\leq6\leq7\), $y_i$ and ` + "`\\(literal\\)`\n\n" +
+    "```python\n" + String.raw`s = "\[code\]"` + "\n```\n\n" + String.raw`\[z_i\]`;
+  const once = normalizeMarkdownMath(input);
+  assert.equal(normalizeMarkdownMath(once), once);
+  assert.match(once, /\$5\\leq6\\leq7\$/);
+  assert.ok(once.includes(String.raw`$y_i$`));
+  assert.ok(once.includes(String.raw`\[code\]`));
+});

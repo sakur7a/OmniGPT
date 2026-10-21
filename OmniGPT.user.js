@@ -2,7 +2,7 @@
 // @name         OmniGPT - ChatGPT Export & LaTeX Copy
 // @name:zh-CN   OmniGPT - ChatGPT 对话导出与 LaTeX 复制
 // @namespace    https://github.com/sakur7a/OmniGPT
-// @version      0.3.2
+// @version      0.3.4
 // @description  Export conversations and copy LaTeX as portable plain-text Markdown. Optional quote compatibility.
 // @description:zh-CN 导出对话，复制为保留 LaTeX 的纯文本 Markdown；可选引用兼容。
 // @author       OmniGPT contributors
@@ -18,7 +18,7 @@
 // @grant        none
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.3.2";
+globalThis.OmniGPTVersion = "0.3.4";
 
 (function initClipboard(global) {
   "use strict";
@@ -27,7 +27,9 @@ globalThis.OmniGPTVersion = "0.3.2";
   const MATH = ".katex-display, .katex, mjx-container, .MathJax, math, [data-math-source], [data-latex], [data-tex], [data-original-tex]";
   const SOURCE_ATTRS = ["data-math-source", "data-latex", "data-tex", "data-original-tex", "alttext"];
   const TEX_ANNOTATION = 'annotation[encoding="application/x-tex"], annotation[encoding="application/x-latex"]';
-  const MESSAGE = '[data-message-author-role], section[data-turn], [data-testid^="conversation-turn-"], main article, main .markdown';
+  const CURRENT_ASSISTANT = '[data-content-search-unit-key$=":assistant"]';
+  const MESSAGE = '[data-message-author-role], section[data-turn], [data-testid^="conversation-turn-"], main article, main .markdown, ' +
+    CURRENT_ASSISTANT + ', [data-content-search-unit-key$=":user"]';
   const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
   const SKIP = 'button, nav, aside, footer, style, noscript, svg, mjx-assistive-mml, annotation, annotation-xml, [hidden], [aria-hidden="true"], .sr-only, #omnigpt-root';
   const BLOCK = new Set(["P", "DIV", "SECTION", "ARTICLE", "MAIN", "FIGURE", "FIGCAPTION", "DL", "DT", "DD"]);
@@ -64,7 +66,7 @@ globalThis.OmniGPTVersion = "0.3.2";
 
   // Change LaTeX delimiters only in Markdown prose. Code blocks, code spans
   // and escaped literal backslashes must remain byte-for-byte unchanged.
-  function normalizeMarkdownMath(source) {
+  function replaceMathDelimiters(source, replacement) {
     const input = String(source ?? "");
     let result = "";
     let i = 0;
@@ -116,7 +118,7 @@ globalThis.OmniGPTVersion = "0.3.2";
         if (end >= 0) {
           const tex = input.slice(i + 2, end);
           if (tex.trim()) {
-            result += inline ? "$" + tex + "$" : "$" + "$" + "\n" + tex.trim() + "\n" + "$" + "$";
+            result += replacement(tex, !inline);
             i = end + 2;
             continue;
           }
@@ -126,6 +128,11 @@ globalThis.OmniGPTVersion = "0.3.2";
       i += 1;
     }
     return result;
+  }
+
+  function normalizeMarkdownMath(source) {
+    return replaceMathDelimiters(source, (tex, display) =>
+      display ? "$$\n" + tex.trim() + "\n$$" : "$" + tex + "$");
   }
 
   function setMathStyle(style, persist = true) {
@@ -209,8 +216,14 @@ globalThis.OmniGPTVersion = "0.3.2";
   function serializeRange(range, options = {}) {
     if (!eligibleRange(range)) return null;
     const tokens = [];
+    const displayTokens = new Set();
     const prefix = `\uE000omnigpt-${Math.random().toString(36).slice(2)}-`;
-    const protect = (value) => { tokens.push(value); return `${prefix}${tokens.length - 1}\uE001`; };
+    const tokenPattern = new RegExp(`${prefix}(\\d+)\uE001`, "g");
+    const protect = (value, display = false) => {
+      tokens.push(value);
+      if (display) displayTokens.add(tokens.length - 1);
+      return `${prefix}${tokens.length - 1}\uE001`;
+    };
     const style = options.mathStyle || mathStyle;
     let mathCount = 0;
     let visitedNodes = 0;
@@ -246,7 +259,15 @@ globalThis.OmniGPTVersion = "0.3.2";
     const render = (node) => {
       if (!intersects(node)) return "";
       visitedNodes += 1;
-      if (node.nodeType === 3) return codeDepth ? rawText(node) : escapeProse(rawText(node));
+      if (node.nodeType === 3) {
+        if (codeDepth) return rawText(node);
+        // Protect raw formulas before prose escaping, even beside rendered math or code.
+        return escapeProse(replaceMathDelimiters(rawText(node), (tex, display) => {
+          mathCount += 1;
+          return protect(formatFormula({ tex: display ? tex.trim() : tex, display }, style), display);
+        })).replace(tokenPattern, (token, index) =>
+          displayTokens.has(Number(index)) ? `\n\n${token}\n\n` : token);
+      }
       if (node.nodeType !== 1) return "";
       const tag = node.tagName.toUpperCase();
       if (!codeDepth && node.matches(MATH) && !node.matches(MESSAGE)) {
@@ -317,7 +338,6 @@ globalThis.OmniGPTVersion = "0.3.2";
     };
     const root = formulaRoot(range.commonAncestorContainer) || range.commonAncestorContainer;
     let text = clean(render(root));
-    const tokenPattern = new RegExp(`${prefix}(\\d+)\uE001`, "g");
     text = text.replace(tokenPattern, (_, index, offset) => {
       const before = text.slice(text.lastIndexOf("\n", offset - 1) + 1, offset);
       const indent = /^(?:[ \t]|> ?)*(?:(?:[-+*]|\d+\.) )?$/.test(before)
@@ -352,20 +372,8 @@ globalThis.OmniGPTVersion = "0.3.2";
   function handleCopy(event) {
     if (copyFallbackActive || !event.clipboardData || elementOf(event.target)?.closest(EDITABLE)) return;
     try {
-      const selection = global.getSelection();
-      const payload = selectionPayload(selection);
-      let text = payload?.mathCount ? payload.text : "";
-      if (!text && mathStyle === "markdown" && selection?.rangeCount === 1) {
-        const range = selection.getRangeAt(0);
-        const container = elementOf(range.commonAncestorContainer);
-        // Preserve native copy of code and anything outside a real message.
-        if (eligibleRange(range) && !container?.closest("pre, code") &&
-            !container?.querySelector?.("pre, code")) {
-          const original = selection.toString();
-          const converted = normalizeMarkdownMath(original);
-          if (converted !== original) text = converted;
-        }
-      }
+      const payload = selectionPayload(global.getSelection());
+      const text = payload?.mathCount ? payload.text : "";
       if (!text) return;
       event.clipboardData.clearData();
       event.clipboardData.setData("text/plain", text);
@@ -379,32 +387,33 @@ globalThis.OmniGPTVersion = "0.3.2";
   // Handle only the known reply action, and leave unsupported turns untouched.
   function handleNativeTurnCopy(event, onCopied) {
     if (event.defaultPrevented || (event.button !== 0 && event.detail !== 0)) return;
-    const button = elementOf(event.target)?.closest('button[data-testid="copy-turn-action-button"]');
-    if (!button || button.closest("#omnigpt-root")) return;
-    const turn = button.closest('[data-testid^="conversation-turn-"]');
+    const button = elementOf(event.target)?.closest("button");
+    if (!button || button.disabled || button.getAttribute("aria-disabled") === "true" ||
+        button.closest("#omnigpt-root, pre, code, [data-user-message-bubble]")) return;
+    const legacy = button.matches('[data-testid="copy-turn-action-button"]');
+    const current = button.closest(".turn-action-controls") &&
+      /^(?:copy|复制|複製)$/i.test((button.getAttribute("aria-label") || "").trim());
+    if (!legacy && !current) return;
+    const turn = button.closest('[data-testid^="conversation-turn-"], section[data-turn], [data-talvt-turn-state]');
     if (!turn) return;
-    const markdownBlocks = turn.querySelectorAll(".markdown");
-    const content = markdownBlocks.length === 1 ? markdownBlocks[0] :
-      turn.querySelector('[data-message-author-role="assistant"]');
-    if (!content) return;
-
-    const rendered = serializeElement(content, { mathStyle });
-    let text = "";
-    if (rendered?.mathCount && rendered.text) {
-      text = rendered.text;
-    } else if (mathStyle === "markdown" && !content.querySelector("pre, code")) {
-      // Some response bodies show literal math delimiters, not renderer nodes.
-      // Only override the native action if there is a real delimiter to change.
-      const original = content.innerText || content.textContent || "";
-      const converted = normalizeMarkdownMath(original);
-      if (converted === original) return;
-      text = converted;
-    } else return;
+    let blocks = [...turn.querySelectorAll(CURRENT_ASSISTANT)];
+    if (!blocks.length && legacy) {
+      const assistant = turn.querySelector('[data-message-author-role="assistant"]');
+      blocks = [...(assistant || turn).querySelectorAll(".markdown")];
+      if (!blocks.length && assistant) blocks = [assistant];
+    }
+    // A turn can contain a user prompt, reasoning and several assistant body blocks.
+    // Read only assistant bodies, once each; never serialize the whole interaction.
+    blocks = blocks.filter((node) => !blocks.some((other) => other !== node && other.contains(node)));
+    const parts = blocks.map((node) => serializeElement(node, { mathStyle }));
+    if (!parts.length || parts.some((part) => !part) || !parts.some((part) => part.mathCount)) return;
+    const text = parts.map((part) => part.text).filter(Boolean).join("\n\n");
+    if (!text) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
     void writeText(text)
-      .then(() => onCopied("已复制公式（" + (mathStyle === "markdown" ? "Markdown $ / $" : "LaTeX") + "）"))
+      .then(() => onCopied("已复制公式（" + (mathStyle === "markdown" ? "Markdown $ / $$" : "LaTeX") + "）"))
       .catch(() => onCopied("复制失败，请检查剪贴板权限"));
   }
 

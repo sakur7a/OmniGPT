@@ -51,6 +51,7 @@ jobs:
           python -m playwright install --with-deps chromium
           python test/browser-regression.py
           python test/browser-v030.py
+          python test/browser-current-dom.py
 
       - name: Read release version
         id: release
