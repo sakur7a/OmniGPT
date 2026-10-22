@@ -25,9 +25,9 @@
 </div>
 
 <p align="center">
-  <img src="docs/assets/readme-preview.webp" width="820" alt="OmniGPT 0.3.0 panel in light and dark themes, showing export scope, file format, advanced options, export and copy actions">
+  <img src="docs/assets/readme-preview.webp" width="820" alt="OmniGPT 0.3.4 light and dark panels captured from the actual userscript in an isolated local example">
 </p>
-<p align="center"><sub>Interface preview from v0.3.0 · local demo environment · advanced options expanded on demand</sub></p>
+<p align="center"><sub>v0.3.4 actual userscript UI · isolated local example · not a signed-in ChatGPT capture</sub></p>
 
 **Conversation export** — Save the current conversation or accessible history as Markdown, JSON, TXT or reference-material chunks.<br>
 **Math copying** — Use selection copy or a recognized reply-copy button to keep inline/display TeX, including replies that mix formulas and code.<br>
@@ -122,6 +122,14 @@ The selected style persists across page reloads. Seeing `\(...\)` can be intenti
 | Include source/time (包含来源和导出时间) | On | Controls optional metadata in text/Markdown output and reference chunks; JSON keeps its structure and warnings remain |
 | Formula copy (公式复制) | Markdown | Controls selection, double-click and recognized reply-copy formula delimiters |
 | Quote compatibility (引用兼容) | Off | Optional scoped selection-text compatibility for quoting |
+
+<details>
+<summary>v0.3.4 More options screenshot</summary>
+
+<p align="center"><img src="docs/assets/formula-copy-options.png" width="340" alt="Actual OmniGPT 0.3.4 panel with More options expanded: read method, metadata, Markdown formula style and quote compatibility off"></p>
+<p align="center"><sub>Captured from the unmodified v0.3.4 userscript in a fresh headless Chromium context on a synthetic local example page. This shows UI rendering, not authenticated ChatGPT copy/export verification.</sub></p>
+
+</details>
 
 File format, metadata, formula style and quote compatibility are saved in the current site's local browser storage. Scope, read method and history count return to defaults on a new page load. Settings are not account-synced.
 

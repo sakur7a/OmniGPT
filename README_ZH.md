@@ -25,9 +25,9 @@
 </div>
 
 <p align="center">
-  <img src="docs/assets/readme-preview.webp" width="820" alt="OmniGPT 0.3.0 实际面板的浅色与深色预览：导出范围、文件格式、更多选项，以及导出和复制按钮">
+  <img src="docs/assets/readme-preview.webp" width="820" alt="OmniGPT 0.3.4 实际用户脚本在隔离本地示例页中的浅色与深色面板截图">
 </p>
-<p align="center"><sub>v0.3.0 界面预览 · 本地演示环境 · 更多选项按需展开</sub></p>
+<p align="center"><sub>v0.3.4 实际用户脚本 UI · 隔离本地示例页 · 不是已登录 ChatGPT 的截图</sub></p>
 
 **对话归档** — 将当前对话或可访问的历史导出为 Markdown、JSON、TXT 或参考材料分片。<br>
 **公式复制** — 框选复制或使用已识别的回复复制按钮，保留行内、独立公式的 TeX，也处理公式与代码混排的回复。<br>
@@ -122,6 +122,14 @@ $$
 | 包含来源和导出时间 | 开启 | 控制文本、Markdown 及参考分片的可选元数据；JSON 保留结构，警告不受影响 |
 | 公式复制 | Markdown | 控制框选、双击及已识别回复按钮的公式定界符 |
 | 引用兼容 | 关闭 | 可选的选区文本兼容，用于引用流程 |
+
+<details>
+<summary>v0.3.4 更多选项截图</summary>
+
+<p align="center"><img src="docs/assets/formula-copy-options.png" width="340" alt="实际 OmniGPT 0.3.4 面板展开更多选项：读取方式、元数据、Markdown 公式格式及默认关闭的引用兼容"></p>
+<p align="center"><sub>使用未修改的 v0.3.4 用户脚本，在全新的无头 Chromium 上加载本地合成示例页截取；展示 UI 渲染，不代表登录态 ChatGPT 的复制或导出验收。</sub></p>
+
+</details>
 
 文件格式、元数据、公式格式与引用兼容保存在当前站点的浏览器本地存储中；范围、读取方式和历史数量在新一次页面加载时恢复默认。这些设置不通过账号同步。
 
