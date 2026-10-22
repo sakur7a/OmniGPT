@@ -20,6 +20,7 @@
 <p>
   <a href="https://github.com/sakur7a/OmniGPT/releases/latest"><img src="https://img.shields.io/github/v/release/sakur7a/OmniGPT?style=flat-square&label=release&color=59636e" alt="最新 GitHub Release"></a>
   <a href="https://github.com/sakur7a/OmniGPT/actions/workflows/build-userscript.yml"><img src="https://img.shields.io/github/actions/workflow/status/sakur7a/OmniGPT/build-userscript.yml?branch=main&style=flat-square&label=checks" alt="主分支构建与测试状态"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-59636e?style=flat-square" alt="MIT License"></a>
 </p>
 
 </div>
@@ -224,4 +225,4 @@ OmniGPT/
 
 导出逻辑基于此前的 `chatgpt-exporter` 项目整理。LaTeX 兼容思路来自 ChatGPT Better TeX Quote（schweigen，MIT）与 TexCopyer（yjy / blime，GPL-3.0）。详见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
-[GPL-3.0-or-later](LICENSE) · [问题反馈](https://github.com/sakur7a/OmniGPT/issues) · [版本记录](https://github.com/sakur7a/OmniGPT/releases)
+[MIT](LICENSE) · [问题反馈](https://github.com/sakur7a/OmniGPT/issues) · [版本记录](https://github.com/sakur7a/OmniGPT/releases)

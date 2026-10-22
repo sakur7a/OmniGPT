@@ -20,6 +20,7 @@
 <p>
   <a href="https://github.com/sakur7a/OmniGPT/releases/latest"><img src="https://img.shields.io/github/v/release/sakur7a/OmniGPT?style=flat-square&label=release&color=59636e" alt="Latest GitHub release"></a>
   <a href="https://github.com/sakur7a/OmniGPT/actions/workflows/build-userscript.yml"><img src="https://img.shields.io/github/actions/workflow/status/sakur7a/OmniGPT/build-userscript.yml?branch=main&style=flat-square&label=checks" alt="Main branch build and test status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-59636e?style=flat-square" alt="MIT License"></a>
 </p>
 
 </div>
@@ -223,4 +224,4 @@ OmniGPT/
 
 Export logic was adapted from the earlier `chatgpt-exporter` project. LaTeX compatibility ideas were informed by ChatGPT Better TeX Quote (schweigen, MIT) and TexCopyer (yjy / blime, GPL-3.0). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.
 
-[GPL-3.0-or-later](LICENSE) · [Report an issue](https://github.com/sakur7a/OmniGPT/issues) · [Releases](https://github.com/sakur7a/OmniGPT/releases)
+[MIT](LICENSE) · [Report an issue](https://github.com/sakur7a/OmniGPT/issues) · [Releases](https://github.com/sakur7a/OmniGPT/releases)

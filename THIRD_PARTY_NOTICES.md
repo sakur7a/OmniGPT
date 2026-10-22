@@ -1,5 +1,10 @@
 # Third-party notices
 
+## chatgpt-exporter
+
+- Source: earlier local `chatgpt-exporter` project, credited in the [initial README](https://github.com/sakur7a/OmniGPT/blob/c03f17c1e4c611d1e5ff0f25ad64b63961a1955d/README.md#L58).
+- Contribution: basis for the conversation export logic.
+
 ## ChatGPT Better TeX Quote
 
 - Author: schweigen
@@ -13,4 +18,4 @@
 - License: GPL-3.0
 - Reused concept: double-click a rendered formula to copy its TeX source and show feedback.
 
-The combined OmniGPT userscript is distributed under GPL-3.0-or-later.
+OmniGPT is distributed under the [MIT License](LICENSE).

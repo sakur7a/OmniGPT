@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const { version } = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+const { version, license } = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const modules = await Promise.all(["clipboard", "exporter", "omnigpt"].map(name => readFile(path.join(root, "src", `${name}.js`), "utf8")));
 const metadata = `// ==UserScript==
 // @name         OmniGPT - ChatGPT Export & LaTeX Copy
@@ -12,7 +12,7 @@ const metadata = `// ==UserScript==
 // @description  Export conversations and copy LaTeX as portable plain-text Markdown. Optional quote compatibility.
 // @description:zh-CN 导出对话，复制为保留 LaTeX 的纯文本 Markdown；可选引用兼容。
 // @author       OmniGPT contributors
-// @license      GPL-3.0-or-later
+// @license      ${license}
 // @homepageURL  https://github.com/sakur7a/OmniGPT
 // @supportURL   https://github.com/sakur7a/OmniGPT/issues
 // @downloadURL  https://raw.githubusercontent.com/sakur7a/OmniGPT/main/OmniGPT.user.js

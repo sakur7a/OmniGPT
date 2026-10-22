@@ -21,6 +21,9 @@ if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(packageJson.version)) {
 if (version !== packageJson.version) {
   errors.push(`userscript @version (${version || "missing"}) does not match package.json (${packageJson.version})`);
 }
+if (!packageJson.license || metadataValue("license") !== packageJson.license) {
+  errors.push("userscript @license must match the project license in package.json");
+}
 if (metadataValue("downloadURL") !== expectedRawUrl) {
   errors.push("@downloadURL must point to the main-branch GitHub Raw userscript");
 }

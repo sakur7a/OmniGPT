@@ -2,11 +2,11 @@
 // @name         OmniGPT - ChatGPT Export & LaTeX Copy
 // @name:zh-CN   OmniGPT - ChatGPT 对话导出与 LaTeX 复制
 // @namespace    https://github.com/sakur7a/OmniGPT
-// @version      0.3.5
+// @version      0.3.6
 // @description  Export conversations and copy LaTeX as portable plain-text Markdown. Optional quote compatibility.
 // @description:zh-CN 导出对话，复制为保留 LaTeX 的纯文本 Markdown；可选引用兼容。
 // @author       OmniGPT contributors
-// @license      GPL-3.0-or-later
+// @license      MIT
 // @homepageURL  https://github.com/sakur7a/OmniGPT
 // @supportURL   https://github.com/sakur7a/OmniGPT/issues
 // @downloadURL  https://raw.githubusercontent.com/sakur7a/OmniGPT/main/OmniGPT.user.js
@@ -18,7 +18,7 @@
 // @grant        none
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.3.5";
+globalThis.OmniGPTVersion = "0.3.6";
 
 (function initClipboard(global) {
   "use strict";

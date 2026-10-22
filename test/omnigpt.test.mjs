@@ -7,7 +7,7 @@ const exporterSource = await readFile(new URL("../src/exporter.js", import.meta.
 const omnigptSource = await readFile(new URL("../src/omnigpt.js", import.meta.url), "utf8");
 const clipboardSource = await readFile(new URL("../src/clipboard.js", import.meta.url), "utf8");
 const userscriptSource = await readFile(new URL("../OmniGPT.user.js", import.meta.url), "utf8");
-const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const { version, license } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 function loadExporter(overrides = {}) {
   const context = {
@@ -23,9 +23,10 @@ function jsonResponse(status, body) {
   return { ok: status >= 200 && status < 300, status, statusText: status === 200 ? "OK" : "Error",
     async json() { return body; }, async text() { return typeof body === "string" ? body : JSON.stringify(body); } };
 }
-test("generated userscript version matches package.json", () => {
+test("generated userscript version and license match package.json", () => {
   assert.match(userscriptSource, /^\/\/ ==UserScript==/);
   assert.equal(userscriptSource.match(/\/\/ @version\s+(\S+)/)?.[1], version);
+  assert.equal(userscriptSource.match(/\/\/ @license\s+(\S+)/)?.[1], license);
   assert.match(userscriptSource, /\/\/ @grant\s+none/);
   assert.match(userscriptSource, /https:\/\/chatgpt\.com\/\*/);
 });
