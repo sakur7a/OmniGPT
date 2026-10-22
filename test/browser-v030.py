@@ -129,14 +129,14 @@ class BrowserTests(unittest.TestCase):
     def test_16_offline_page_export_and_warning(self):
         self.fixture('<p>Offline '+katex('x_i',False)+'</p>');self.open();self.more();self.page.locator('[data-field=source]').select_option('dom')
         with self.page.expect_download() as d:self.page.locator('[data-action=export]').click()
-        content=Path(d.value.path()).read_text();self.assertIn('Offline $x_i$',content);self.assertIn('可能缺失',content)
+        content=Path(d.value.path()).read_text();self.assertIn('Offline $x_i$',content);self.assertIn('may be missing',content)
         self.assertEqual(self.page.evaluate('metrics.fetches'),0)
-        self.assertIn('已请求下载',self.page.locator('.omnigpt-status').inner_text())
+        self.assertIn('Download requested',self.page.locator('.omnigpt-status').inner_text())
     def test_17_cancel_inflight_ui(self):
         self.page.evaluate('''()=>{window.wasAborted=false;window.fetch=(u,o)=>u.endsWith('/api/auth/session')?Promise.resolve({ok:true,json:async()=>({accessToken:'x'})}):new Promise((_,reject)=>o.signal.addEventListener('abort',()=>{wasAborted=true;reject(new Error('abort'));}));}''')
         self.open();self.page.locator('[data-action=export]').click();self.page.wait_for_timeout(10)
         self.assertTrue(self.page.locator('[data-action=cancel]').is_visible());self.page.locator('[data-action=cancel]').click()
-        self.page.wait_for_function('window.wasAborted');self.assertIn('已取消',self.page.locator('.omnigpt-status').inner_text())
+        self.page.wait_for_function('window.wasAborted');self.assertIn('Export cancelled',self.page.locator('.omnigpt-status').inner_text())
     def test_18_narrow_light_dark_bounds(self):
         for width,scheme in [(1280,'light'),(600,'dark'),(390,'light')]:
             self.page.set_viewport_size({'width':width,'height':720});self.page.emulate_media(color_scheme=scheme)
@@ -203,10 +203,21 @@ class BrowserTests(unittest.TestCase):
         }''')
         self.open()
         self.page.locator('[data-action=copy]').click()
-        self.page.wait_for_function("document.querySelector('.omnigpt-status')?.textContent.includes('已复制')")
+        self.page.wait_for_function("document.querySelector('.omnigpt-status')?.textContent.includes('Copied Markdown')")
         pasted=self.page.evaluate('navigator.clipboard.readText()')
         self.assertIn(chr(36)+r'5\leq6\leq7'+chr(36),pasted)
         self.assertIn(r'`\(z\)`',pasted)
+        self.assertEqual(self.errors,[])
+
+    def test_25_empty_page_export_reports_english_error(self):
+        self.fixture('<p></p>');self.open();self.more()
+        self.page.locator('[data-field=source]').select_option('dom')
+        self.page.locator('[data-action=export]').click()
+        status=self.page.locator('.omnigpt-status')
+        self.page.wait_for_function("document.querySelector('.omnigpt-status')?.dataset.kind==='error'")
+        self.assertEqual(status.inner_text(),'No exportable content found on the page')
+        self.assertEqual(self.page.evaluate('metrics.fetches'),0)
+        self.assertTrue(self.page.locator('[data-action=export]').is_enabled())
         self.assertEqual(self.errors,[])
 
 if __name__=='__main__':unittest.main(verbosity=2)

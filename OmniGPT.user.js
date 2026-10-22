@@ -2,7 +2,7 @@
 // @name         OmniGPT - ChatGPT Export & LaTeX Copy
 // @name:zh-CN   OmniGPT - ChatGPT 对话导出与 LaTeX 复制
 // @namespace    https://github.com/sakur7a/OmniGPT
-// @version      0.3.4
+// @version      0.3.5
 // @description  Export conversations and copy LaTeX as portable plain-text Markdown. Optional quote compatibility.
 // @description:zh-CN 导出对话，复制为保留 LaTeX 的纯文本 Markdown；可选引用兼容。
 // @author       OmniGPT contributors
@@ -18,7 +18,7 @@
 // @grant        none
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.3.4";
+globalThis.OmniGPTVersion = "0.3.5";
 
 (function initClipboard(global) {
   "use strict";
@@ -521,14 +521,14 @@ globalThis.OmniGPTVersion = "0.3.4";
   const GPT_UPLOAD_TARGET_CHARS = 900000;
   const TURN = "section[data-turn='user'], section[data-turn='assistant'], [data-testid^='conversation-turn-'], [data-message-author-role]";
   const EXCLUDE = '#omnigpt-root, nav, aside, form, [hidden], [aria-hidden="true"]';
-  const DOM_WARNING = "仅导出当前页面已加载的消息，屏幕外或未加载的历史可能缺失。";
-  const ASSET_WARNING = "附件、图片等仅保留可用的引用或占位信息，不包含二进制文件。";
+  const DOM_WARNING = "Only messages loaded on the current page are exported; off-screen or unloaded history may be missing.";
+  const ASSET_WARNING = "Attachments and images include available references or placeholders only; binary files are not included.";
   let cachedSession = null;
   let cachedSessionAt = 0;
   let sessionPending = null;
   let cachedApiScope = null;
 
-  const abortError = () => Object.assign(new Error("已取消导出"), { name: "AbortError" });
+  const abortError = () => Object.assign(new Error("Export cancelled"), { name: "AbortError" });
   function checkAbort(signal) { if (signal?.aborted) throw abortError(); }
   function progress(options, value) { options.onProgress?.(value); }
   function getBaseOrigin() {
@@ -575,8 +575,8 @@ globalThis.OmniGPTVersion = "0.3.4";
       });
       checkAbort(options.signal);
       if (!response.ok) {
-        const messages = { 401: "登录已失效，请刷新后重试", 403: "没有访问权限或请求被拦截", 404: "接口或对话不可用", 429: "请求过于频繁，请稍后重试" };
-        const error = errorWith(`${messages[response.status] || "请求失败"}（HTTP ${response.status}）`, "HTTP", response.status);
+        const messages = { 401: "Your session has expired. Refresh the page and try again", 403: "Access denied or request blocked", 404: "Endpoint or conversation unavailable", 429: "Too many requests. Please try again later" };
+        const error = errorWith(`${messages[response.status] || "Request failed"} (HTTP ${response.status})`, "HTTP", response.status);
         const retry = response.headers?.get?.("retry-after");
         error.retryAfterMs = retry == null ? null : /^\d+(?:\.\d+)?$/.test(retry) ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - Date.now());
         // Discard the unread body without logging private response content.
@@ -589,13 +589,13 @@ globalThis.OmniGPTVersion = "0.3.4";
         return result;
       } catch (error) {
         if (options.signal?.aborted || timedOut) throw error;
-        throw errorWith("接口未返回有效 JSON，可能需要重新登录", "SCHEMA");
+        throw errorWith("The response is not valid JSON. You may need to sign in again", "SCHEMA");
       }
     } catch (error) {
       if (options.signal?.aborted) throw abortError();
-      if (timedOut) throw errorWith("读取超时，请重试或选择已加载页面导出", "TIMEOUT");
+      if (timedOut) throw errorWith("Request timed out. Try again or export the loaded page", "TIMEOUT");
       if (error.code) throw error;
-      throw errorWith("网络请求失败，请检查连接后重试", "NETWORK");
+      throw errorWith("Network request failed. Check your connection and try again", "NETWORK");
     } finally {
       if (timer !== null) global.clearTimeout(timer);
       options.signal?.removeEventListener("abort", cancel);
@@ -608,7 +608,7 @@ globalThis.OmniGPTVersion = "0.3.4";
     if (!forceRefresh && cachedSession && Date.now() - cachedSessionAt < SESSION_TTL_MS) return cachedSession;
     sessionPending = (async () => {
       const session = await requestJson("/api/auth/session", { accept: "application/json" }, options);
-      if (!session || typeof session !== "object") throw errorWith("登录会话格式不可用", "SCHEMA");
+      if (!session || typeof session !== "object") throw errorWith("Invalid sign-in session data", "SCHEMA");
       cachedSession = session;
       cachedSessionAt = Date.now();
       if (forceRefresh) cachedApiScope = null;
@@ -684,7 +684,7 @@ globalThis.OmniGPTVersion = "0.3.4";
   function assertConversationId(detail, id) {
     const returned = detail?.conversation_id ?? ((detail?.mapping || detail?.current_node) ? detail?.id : null);
     if (returned != null && String(returned) !== String(id)) {
-      throw errorWith("接口返回了其他对话的数据，已停止导出", "SCHEMA");
+      throw errorWith("Export stopped: the response belongs to a different conversation", "SCHEMA");
     }
   }
   function assertDetailPage(detail, id) {
@@ -692,14 +692,14 @@ globalThis.OmniGPTVersion = "0.3.4";
     if (!Array.isArray(detail?.messages) || typeof detail?.page_info?.has_previous_page !== "boolean" ||
         detail.partial === true || detail.is_partial === true || detail.truncated === true ||
         detail.is_truncated === true || detail.is_complete === false) {
-      throw errorWith("新版对话分页结构不完整，已停止以避免漏导", "SCHEMA");
+      throw errorWith("Export stopped: incomplete conversation pagination data", "SCHEMA");
     }
   }
   function flatRecord(item) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) throw errorWith("对话消息结构不可识别", "SCHEMA");
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw errorWith("Unrecognized conversation message structure", "SCHEMA");
     const message = Object.hasOwn(item, "message") ? item.message : item;
     const id = item.id ?? message?.id;
-    if (typeof id !== "string" || !id) throw errorWith("对话消息缺少 ID", "SCHEMA");
+    if (typeof id !== "string" || !id) throw errorWith("Conversation message ID is missing", "SCHEMA");
     const keys = ["parent", "parent_id", "parent_message_id"];
     const owner = keys.some((key) => Object.hasOwn(item, key)) ? item : message;
     const key = keys.find((key) => Object.hasOwn(owner || {}, key));
@@ -708,24 +708,24 @@ globalThis.OmniGPTVersion = "0.3.4";
   async function fetchPagedDetail(first, id, options = {}) {
     assertDetailPage(first, id);
     if (first.page_info.has_next_page === true) {
-      throw errorWith("接口返回的不是最新对话页，已停止以避免漏导", "PAGINATION");
+      throw errorWith("Export stopped: the response is not the latest conversation page", "PAGINATION");
     }
     const pages = [first.messages];
     const seenCursors = new Set();
     let current = first;
     for (let page = 1; current.page_info.has_previous_page; page += 1) {
       checkAbort(options.signal);
-      if (page >= DETAIL_PAGE_LIMIT) throw errorWith("对话分页超过安全上限，已停止以避免漏导", "PAGINATION");
+      if (page >= DETAIL_PAGE_LIMIT) throw errorWith("Export stopped: conversation pagination exceeded the safety limit", "PAGINATION");
       const cursor = current.page_info.start_cursor;
       if (typeof cursor !== "string" || !cursor || seenCursors.has(cursor)) {
-        throw errorWith("对话分页游标缺失或重复，已停止以避免漏导", "PAGINATION");
+        throw errorWith("Export stopped: a conversation pagination cursor is missing or repeated", "PAGINATION");
       }
       seenCursors.add(cursor);
       progress(options, { phase: "detail-pages", page: page + 1, id });
       const path = `/backend-api/conversations/${encodeURIComponent(id)}?include_has_versions=true&num_turns=${DETAIL_PAGE_SIZE}&before=${encodeURIComponent(cursor)}`;
       current = unwrapDetail(await fetchJson(path, { ...options, requireAuth: true }));
       assertDetailPage(current, id);
-      if (!current.messages.length) throw errorWith("对话分页出现空页，已停止以避免漏导", "PAGINATION");
+      if (!current.messages.length) throw errorWith("Export stopped: an empty conversation page was returned", "PAGINATION");
       pages.unshift(current.messages);
     }
     // Pages may share their boundary message. Retain the newest copy, but preserve
@@ -737,12 +737,12 @@ globalThis.OmniGPTVersion = "0.3.4";
       if (!byId.has(record.id)) orderedIds.push(record.id);
       byId.set(record.id, entry);
     }
-    if (!orderedIds.length) throw errorWith("新版接口未返回对话消息", "EMPTY");
+    if (!orderedIds.length) throw errorWith("No conversation messages returned by the API", "EMPTY");
     return { ...first, messages: orderedIds.map((key) => byId.get(key)),
       page_info: { ...first.page_info, has_previous_page: false, has_next_page: false } };
   }
   async function fetchConversationDetail(id, options = {}) {
-    if (!id) throw errorWith("缺少对话 ID", "SCHEMA");
+    if (!id) throw errorWith("Conversation ID is missing", "SCHEMA");
     // The plural route replaced the old mapping-tree endpoint in August 2026.
     // Only fall back on 404/405, never turn an incomplete 200 response into a silent partial export.
     for (const [index, prefix] of ["conversations", "conversation"].entries()) {
@@ -753,7 +753,7 @@ globalThis.OmniGPTVersion = "0.3.4";
         assertConversationId(detail, id);
         if (Array.isArray(detail?.messages)) return fetchPagedDetail(detail, id, options);
         if (detail?.mapping && typeof detail.mapping === "object" && !Array.isArray(detail.mapping)) return detail;
-        throw errorWith("对话结构不可识别，已停止以避免漏导", "SCHEMA");
+        throw errorWith("Export stopped: unrecognized conversation structure", "SCHEMA");
       } catch (error) {
         if (index || ![404, 405].includes(error.status)) throw error;
       }
@@ -762,20 +762,20 @@ globalThis.OmniGPTVersion = "0.3.4";
 
   function activeNodes(conversation) {
     const mapping = conversation?.mapping;
-    if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) throw errorWith("对话结构不可识别", "SCHEMA");
+    if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) throw errorWith("Unrecognized conversation structure", "SCHEMA");
     let nodeId = conversation.current_node;
     const warnings = [];
     if (!nodeId || !Object.hasOwn(mapping, nodeId)) {
       const parents = new Set(Object.values(mapping).map((node) => node?.parent).filter(Boolean));
       const leaves = Object.keys(mapping).filter((id) => !parents.has(id));
-      if (leaves.length !== 1) throw errorWith("无法确定当前回答分支，未混合导出备选回答", "BRANCH");
+      if (leaves.length !== 1) throw errorWith("Cannot determine the active conversation branch; alternative responses were not combined", "BRANCH");
       nodeId = leaves[0];
-      warnings.push("接口未标记当前分支，使用唯一叶节点对应的分支。");
+      warnings.push("The API did not identify the active branch; the branch ending at the only leaf node was used.");
     }
     const nodes = [];
     const visited = new Set();
     while (nodeId) {
-      if (!Object.hasOwn(mapping, nodeId) || !mapping[nodeId] || visited.has(nodeId)) throw errorWith("对话分支存在缺失节点或循环", "BRANCH");
+      if (!Object.hasOwn(mapping, nodeId) || !mapping[nodeId] || visited.has(nodeId)) throw errorWith("The conversation branch contains missing nodes or a cycle", "BRANCH");
       visited.add(nodeId);
       nodes.push({ ...mapping[nodeId], id: nodeId });
       nodeId = mapping[nodeId].parent;
@@ -791,7 +791,7 @@ globalThis.OmniGPTVersion = "0.3.4";
       if (part.parts) return partText(part.parts, state);
       if (part.content) return partText(part.content, state);
       state.assets = true;
-      return `[附件/非文本内容：${safeLine(part.name || part.content_type || "asset")}]`;
+      return `[Attachment/non-text content: ${safeLine(part.name || part.content_type || "asset")}]`;
     }
     return String(part);
   }
@@ -818,18 +818,18 @@ globalThis.OmniGPTVersion = "0.3.4";
     if (!Array.isArray(detail?.messages)) return activeNodes(detail);
     const records = detail.messages.map(flatRecord);
     const byId = new Map(records.map((record) => [record.id, record]));
-    if (byId.size !== records.length) throw errorWith("对话消息 ID 重复，已停止导出", "SCHEMA");
+    if (byId.size !== records.length) throw errorWith("Export stopped: duplicate conversation message IDs", "SCHEMA");
     const current = detail.current_node || detail.current_node_id;
     const warnings = [];
     let active = records;
     if (current) {
-      if (!byId.has(current)) throw errorWith("当前分支尾节点未返回，已停止以避免漏导", "BRANCH");
+      if (!byId.has(current)) throw errorWith("Export stopped: the final message of the active branch was not returned", "BRANCH");
       if (records.length && records.every((record) => record.linked)) {
         active = [];
         const visited = new Set();
         let next = current;
         while (next) {
-          if (visited.has(next) || !byId.has(next)) throw errorWith("当前分支父节点缺失或循环", "BRANCH");
+          if (visited.has(next) || !byId.has(next)) throw errorWith("The active branch contains a missing parent or a cycle", "BRANCH");
           visited.add(next);
           const record = byId.get(next);
           active.push(record);
@@ -842,10 +842,10 @@ globalThis.OmniGPTVersion = "0.3.4";
         active = records.slice(0, records.findIndex((record) => record.id === current) + 1);
       }
     } else {
-      warnings.push("新版接口未提供当前分支尾节点，已按其返回的消息顺序导出。");
+      warnings.push("The API did not identify the final message of the active branch; messages were exported in the returned order.");
     }
     if (["pending", "streaming", "in_progress"].includes(active.at(-1)?.message?.status)) {
-      throw errorWith("回答仍在生成中，请结束生成后再导出", "IN_PROGRESS");
+      throw errorWith("The response is still being generated. Wait until it finishes before exporting", "IN_PROGRESS");
     }
     return { nodes: active.map((record) => ({ id: record.id, message: record.message })), warnings };
   }
@@ -853,7 +853,7 @@ globalThis.OmniGPTVersion = "0.3.4";
   function conversationFromApi(detail, summary = {}) {
     const path = selectedNodes(detail);
     const result = messagesFromNodes(path.nodes);
-    if (!result.messages.length) throw errorWith("未找到可导出的用户或助手正文", "EMPTY");
+    if (!result.messages.length) throw errorWith("No exportable user or assistant content found", "EMPTY");
     const id = detail.id || detail.conversation_id || summary.id || summary.conversation_id || "";
     return { schemaVersion: 1, id, title: detail.title || summary.title || "Untitled conversation",
       url: id ? `${getBaseOrigin()}/c/${encodeURIComponent(id)}` : "", exportedAt: new Date().toISOString(),
@@ -863,7 +863,7 @@ globalThis.OmniGPTVersion = "0.3.4";
   }
 
   function collectConversation(doc = global.document) {
-    if (!global.OmniGPTClipboard?.serializeElement) throw errorWith("页面解析模块不可用，请刷新页面", "DOM");
+    if (!global.OmniGPTClipboard?.serializeElement) throw errorWith("The page parser is unavailable. Refresh the page and try again", "DOM");
     const root = doc.querySelector("main") || doc;
     const canonical = (node) => node.closest("section[data-turn], [data-testid^='conversation-turn-']") || node;
     // querySelectorAll on one union preserves DOM order (not all users followed by assistants).
@@ -893,7 +893,7 @@ globalThis.OmniGPTVersion = "0.3.4";
     const locationAtStart = global.location?.href;
     const ensureLocation = () => {
       checkAbort(options.signal);
-      if (global.location?.href !== locationAtStart) throw errorWith("页面已切换，请在目标对话重新导出", "NAVIGATION");
+      if (global.location?.href !== locationAtStart) throw errorWith("The page changed. Export again from the intended conversation", "NAVIGATION");
     };
     const id = getConversationIdFromLocation();
     let apiError = null;
@@ -912,8 +912,8 @@ globalThis.OmniGPTVersion = "0.3.4";
     ensureLocation();
     progress(options, { phase: "current", source: "dom" });
     const result = collectConversation(doc);
-    if (apiError) result.warnings.unshift(`完整对话读取失败：${apiError.message}；已回退为页面导出。`);
-    if (!result.messageCount) throw apiError || errorWith("页面未找到可导出的正文", "EMPTY");
+    if (apiError) result.warnings.unshift(`Could not read the full conversation: ${apiError.message}; exported the loaded page instead.`);
+    if (!result.messageCount) throw apiError || errorWith("No exportable content found on the page", "EMPTY");
     return result;
   }
 
@@ -927,31 +927,31 @@ globalThis.OmniGPTVersion = "0.3.4";
       checkAbort(options.signal);
       const payload = await fetchJson(`/backend-api/conversations?offset=${offset}&limit=${API_PAGE_SIZE}&order=updated`, { ...options, requireAuth: true });
       const items = Array.isArray(payload) ? payload : [payload?.items, payload?.conversations, payload?.data].find(Array.isArray);
-      if (!items) throw errorWith("历史列表格式变化，未返回空归档", "SCHEMA");
+      if (!items) throw errorWith("Unrecognized history list format; no empty archive was returned", "SCHEMA");
       if (!items.length) {
-        if (payload.has_more === true) throw errorWith("历史分页返回空页但仍有下一页，已停止避免漏导", "PAGINATION");
+        if (payload.has_more === true) throw errorWith("Export stopped: history pagination returned an empty page with more pages remaining", "PAGINATION");
         return conversations;
       }
       let added = 0;
       for (const item of items) {
         const id = item?.id || item?.conversation_id;
-        if (!id) throw errorWith("历史条目缺少 ID", "SCHEMA");
+        if (!id) throw errorWith("Conversation ID is missing from a history entry", "SCHEMA");
         if (seen.has(id)) continue;
         seen.add(id); added += 1;
         conversations.push({ ...item, id });
         if (max && conversations.length >= max) return conversations;
       }
       progress(options, { phase: "listing", completed: conversations.length });
-      if (!added) throw errorWith("历史分页重复，已停止避免无限请求", "PAGINATION");
+      if (!added) throw errorWith("Export stopped: history pagination repeated a page", "PAGINATION");
       offset += items.length;
       if (payload.has_more === false || (typeof payload.total === "number" && offset >= payload.total) ||
           (payload.has_more !== true && typeof payload.total !== "number" && items.length < API_PAGE_SIZE)) return conversations;
     }
-    throw errorWith("历史分页超过安全上限，请限制导出数量", "PAGINATION");
+    throw errorWith("History pagination exceeded the safety limit. Reduce the number of conversations to export", "PAGINATION");
   }
   async function collectAllConversations(options = {}) {
     const summaries = await fetchAllConversationSummaries(options);
-    if (!summaries.length) throw errorWith("当前账号历史列表没有可导出的对话", "EMPTY");
+    if (!summaries.length) throw errorWith("No exportable conversations found in this account's history list", "EMPTY");
     const conversations = [];
     const failures = [];
     for (let i = 0; i < summaries.length; i += DETAIL_FETCH_CONCURRENCY) {
@@ -973,15 +973,15 @@ globalThis.OmniGPTVersion = "0.3.4";
       await pause(0, options.signal);
     }
     checkAbort(options.signal);
-    if (!conversations.length) throw errorWith(`全部 ${failures.length} 条对话读取失败，未生成空归档。${failures[0]?.error || ""}`, "EMPTY");
+    if (!conversations.length) throw errorWith(`No conversations could be loaded (${failures.length} failed); no empty archive was generated. ${failures[0]?.error || ""}`, "EMPTY");
     return { schemaVersion: 1, exportedAt: new Date().toISOString(), source: getBaseOrigin(), scope: "accessible-history-list",
       totalConversations: conversations.length, requestedConversations: summaries.length, failedConversations: failures.length,
-      partial: failures.length > 0, warnings: ["仅涵盖当前账号历史列表返回的对话，不保证包含其他工作区、已归档或项目内未列出的对话。", ASSET_WARNING],
+      partial: failures.length > 0, warnings: ["Only conversations returned by this account's history list are included; other workspaces, archived chats, or unlisted project conversations may be missing.", ASSET_WARNING],
       failures, conversations };
   }
 
   function formatRoleLabel(role) { return ({ user: "User", assistant: "ChatGPT", system: "System", tool: "Tool" })[role] || String(role); }
-  function warningLines(value) { return (value.warnings || []).map((warning) => `> 注意：${safeLine(warning)}`).join("\n"); }
+  function warningLines(value) { return (value.warnings || []).map((warning) => `> Warning: ${safeLine(warning)}`).join("\n"); }
   function formatMarkdown(conversation, options = {}) {
     const sections = [`# ${safeTitle(conversation.title)}`];
     if (options.includeMetadata !== false) sections.push(`- Exported at: ${conversation.exportedAt || ""}\n- Source: ${conversation.url || ""}\n- Messages: ${conversation.messageCount}\n- Acquisition: ${conversation.acquisition || "unknown"}`);
@@ -1013,7 +1013,7 @@ globalThis.OmniGPTVersion = "0.3.4";
   }
   function buildArchiveGptImportFiles(archive, baseName, options = {}) {
     const limit = options.bundleTargetChars || GPT_UPLOAD_TARGET_CHARS;
-    const intro = "# Conversation reference bundle\n\n参考材料，不是原生聊天恢复文件。\n\n" + warningLines(archive) + "\n\n";
+    const intro = "# Conversation reference bundle\n\nReference material, not a native chat history restore file.\n\n" + warningLines(archive) + "\n\n";
     const files = [];
     let current = intro;
     let hasContent = false;
@@ -1029,7 +1029,7 @@ globalThis.OmniGPTVersion = "0.3.4";
         (message.markdown ?? message.text ?? "") + "\n\n";
       if (hasContent && current.length + section.length > limit) flush();
       // Soft target: keep an oversized single message intact rather than breaking a formula/code fence.
-      if (intro.length + section.length > limit) current += "> 单条消息超过分片目标，已完整保留。\n\n";
+      if (intro.length + section.length > limit) current += "> This message exceeds the target chunk size and has been kept intact.\n\n";
       current += section; hasContent = true;
     }
     if (archive.failures?.length) {
@@ -1050,7 +1050,7 @@ globalThis.OmniGPTVersion = "0.3.4";
   }
   function buildExportPayload(format, value, options = {}, archive = false) {
     if (!["markdown", "json", "txt", "gptbundle"].includes(format)) throw new TypeError("Unknown export format");
-    if (!archive && !value.messageCount) throw errorWith("没有可导出的正文", "EMPTY");
+    if (!archive && !value.messageCount) throw errorWith("No exportable content found", "EMPTY");
     const base = `${archive ? "chatgpt-archive" : slugifyTitle(value.title)}-${timestampForFile(value.exportedAt)}`;
     const info = { acquisition: archive ? "api" : value.acquisition, partial: value.partial || false,
       warnings: value.warnings || [], messageCount: archive ? value.conversations.reduce((n, item) => n + item.messageCount, 0) : value.messageCount,
@@ -1166,11 +1166,11 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     lastProgressAt = now;
     if (value.total) { controls.progress.max = value.total; controls.progress.value = value.completed; }
     else controls.progress.removeAttribute("value");
-    if (value.phase === "listing") setStatus(`读取历史列表：${value.completed} 条`);
-    if (value.phase === "details") setStatus(`读取对话 ${value.completed}/${value.total}；成功 ${value.succeeded}，失败 ${value.failed}`);
-    if (value.phase === "current") setStatus(value.source === "api" ? "读取完整对话…" : "读取已加载页面…");
-    if (value.phase === "detail-pages") setStatus(`读取长对话：第 ${value.page} 页…`);
-    if (value.phase === "retry") setStatus(`HTTP ${value.status}，有限重试 ${value.attempt}/2…`);
+    if (value.phase === "listing") setStatus(`Reading history list (${value.completed} found)`);
+    if (value.phase === "details") setStatus(`Reading conversations ${value.completed}/${value.total}; succeeded: ${value.succeeded}, failed: ${value.failed}`);
+    if (value.phase === "current") setStatus(value.source === "api" ? "Reading the full conversation…" : "Reading the loaded page…");
+    if (value.phase === "detail-pages") setStatus(`Reading conversation page ${value.page}…`);
+    if (value.phase === "retry") setStatus(`HTTP ${value.status}; retry ${value.attempt}/2…`);
   }
   function syncControls() {
     const all = controls.scope.value === "all";
@@ -1242,7 +1242,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
       maxConversations: Number(controls.limit.value), onProgress: renderProgress };
     task = controller; lastProgressAt = 0;
     controls.files.replaceChildren(); controls.progress.hidden = false; controls.progress.removeAttribute("value");
-    panel.setAttribute("aria-busy", "true"); syncControls(); setStatus("准备导出…");
+    panel.setAttribute("aria-busy", "true"); syncControls(); setStatus("Preparing export…");
     try {
       const payload = all ? await exporter.getArchiveExportPayload(format, options) : await exporter.getCurrentExportPayload(format, document, options);
       if (controller.signal.aborted) return;
@@ -1256,11 +1256,11 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
         }
       } else exporter.createDownload(payload.content, payload.filename, payload.mimeType);
       const info = payload.info || {};
-      const message = action === "copy" ? "已复制 Markdown（纯文本）" : payload.files?.length ? `已生成 ${payload.files.length} 个分片，点击下方逐个保存；关闭面板会释放分片。` : `已请求下载：${payload.filename}`;
-      const summary = `${info.conversationCount || 1} 个对话 / ${info.messageCount || 0} 条消息${info.failedConversations ? `；失败 ${info.failedConversations} 个（见文件明细）` : ""}`;
+      const message = action === "copy" ? "Copied Markdown as plain text" : payload.files?.length ? `Generated ${payload.files.length} chunks. Save them individually below; closing the panel discards them.` : `Download requested: ${payload.filename}`;
+      const summary = `Conversations: ${info.conversationCount || 1}; messages: ${info.messageCount || 0}${info.failedConversations ? `; failed: ${info.failedConversations} (see file details)` : ""}`;
       setStatus([message, summary, ...(info.warnings || [])].join("\n"), info.partial || info.failedConversations ? "warning" : "info");
     } catch (error) {
-      setStatus(error.name === "AbortError" ? "已取消，未继续读取或生成文件。" : error.message || "导出失败", error.name === "AbortError" ? "info" : "error");
+      setStatus(error.name === "AbortError" ? "Export cancelled. No further data will be read or files generated." : error.message || "Export failed", error.name === "AbortError" ? "info" : "error");
     } finally {
       if (task === controller) task = null;
       controls.progress.hidden = true; panel.removeAttribute("aria-busy"); syncControls();
@@ -1282,7 +1282,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     root.addEventListener("click", (event) => {
       const action = event.target.closest?.("button[data-action]")?.dataset.action;
       if (action === "close") closePanel(true);
-      else if (action === "cancel") { task?.abort(); setStatus("正在取消…"); }
+      else if (action === "cancel") { task?.abort(); setStatus("Cancelling…"); }
       else if (action === "export" || action === "copy") void run(action);
     });
     document.addEventListener("click", (event) => { if (panel && !panel.hidden && !root.contains(event.target)) closePanel(); });

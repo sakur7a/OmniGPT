@@ -92,11 +92,11 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     lastProgressAt = now;
     if (value.total) { controls.progress.max = value.total; controls.progress.value = value.completed; }
     else controls.progress.removeAttribute("value");
-    if (value.phase === "listing") setStatus(`读取历史列表：${value.completed} 条`);
-    if (value.phase === "details") setStatus(`读取对话 ${value.completed}/${value.total}；成功 ${value.succeeded}，失败 ${value.failed}`);
-    if (value.phase === "current") setStatus(value.source === "api" ? "读取完整对话…" : "读取已加载页面…");
-    if (value.phase === "detail-pages") setStatus(`读取长对话：第 ${value.page} 页…`);
-    if (value.phase === "retry") setStatus(`HTTP ${value.status}，有限重试 ${value.attempt}/2…`);
+    if (value.phase === "listing") setStatus(`Reading history list (${value.completed} found)`);
+    if (value.phase === "details") setStatus(`Reading conversations ${value.completed}/${value.total}; succeeded: ${value.succeeded}, failed: ${value.failed}`);
+    if (value.phase === "current") setStatus(value.source === "api" ? "Reading the full conversation…" : "Reading the loaded page…");
+    if (value.phase === "detail-pages") setStatus(`Reading conversation page ${value.page}…`);
+    if (value.phase === "retry") setStatus(`HTTP ${value.status}; retry ${value.attempt}/2…`);
   }
   function syncControls() {
     const all = controls.scope.value === "all";
@@ -168,7 +168,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
       maxConversations: Number(controls.limit.value), onProgress: renderProgress };
     task = controller; lastProgressAt = 0;
     controls.files.replaceChildren(); controls.progress.hidden = false; controls.progress.removeAttribute("value");
-    panel.setAttribute("aria-busy", "true"); syncControls(); setStatus("准备导出…");
+    panel.setAttribute("aria-busy", "true"); syncControls(); setStatus("Preparing export…");
     try {
       const payload = all ? await exporter.getArchiveExportPayload(format, options) : await exporter.getCurrentExportPayload(format, document, options);
       if (controller.signal.aborted) return;
@@ -182,11 +182,11 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
         }
       } else exporter.createDownload(payload.content, payload.filename, payload.mimeType);
       const info = payload.info || {};
-      const message = action === "copy" ? "已复制 Markdown（纯文本）" : payload.files?.length ? `已生成 ${payload.files.length} 个分片，点击下方逐个保存；关闭面板会释放分片。` : `已请求下载：${payload.filename}`;
-      const summary = `${info.conversationCount || 1} 个对话 / ${info.messageCount || 0} 条消息${info.failedConversations ? `；失败 ${info.failedConversations} 个（见文件明细）` : ""}`;
+      const message = action === "copy" ? "Copied Markdown as plain text" : payload.files?.length ? `Generated ${payload.files.length} chunks. Save them individually below; closing the panel discards them.` : `Download requested: ${payload.filename}`;
+      const summary = `Conversations: ${info.conversationCount || 1}; messages: ${info.messageCount || 0}${info.failedConversations ? `; failed: ${info.failedConversations} (see file details)` : ""}`;
       setStatus([message, summary, ...(info.warnings || [])].join("\n"), info.partial || info.failedConversations ? "warning" : "info");
     } catch (error) {
-      setStatus(error.name === "AbortError" ? "已取消，未继续读取或生成文件。" : error.message || "导出失败", error.name === "AbortError" ? "info" : "error");
+      setStatus(error.name === "AbortError" ? "Export cancelled. No further data will be read or files generated." : error.message || "Export failed", error.name === "AbortError" ? "info" : "error");
     } finally {
       if (task === controller) task = null;
       controls.progress.hidden = true; panel.removeAttribute("aria-busy"); syncControls();
@@ -208,7 +208,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     root.addEventListener("click", (event) => {
       const action = event.target.closest?.("button[data-action]")?.dataset.action;
       if (action === "close") closePanel(true);
-      else if (action === "cancel") { task?.abort(); setStatus("正在取消…"); }
+      else if (action === "cancel") { task?.abort(); setStatus("Cancelling…"); }
       else if (action === "export" || action === "copy") void run(action);
     });
     document.addEventListener("click", (event) => { if (panel && !panel.hidden && !root.contains(event.target)) closePanel(); });
