@@ -1,11 +1,11 @@
-<p align="right"><strong>简体中文</strong> · <a href="README_EN.md">English</a></p>
+<p align="right"><strong>简体中文</strong> · <a href="README.md">English</a></p>
 
 <div align="center">
 
 <h1>OmniGPT</h1>
 
 <p><strong>让对话可归档，让公式可编辑。</strong></p>
-<p>轻量的 ChatGPT 对话导出与 LaTeX 复制脚本。</p>
+<p>在 Tampermonkey 等用户脚本管理器中运行的轻量脚本，用于导出 ChatGPT 对话和复制可编辑的 LaTeX。</p>
 
 <p>
   <a href="https://raw.githubusercontent.com/sakur7a/OmniGPT/main/OmniGPT.user.js"><strong>安装脚本</strong></a>
@@ -27,131 +27,149 @@
 <p align="center">
   <img src="docs/assets/readme-preview.webp" width="820" alt="OmniGPT 0.3.0 实际面板的浅色与深色预览：导出范围、文件格式、更多选项，以及导出和复制按钮">
 </p>
-<p align="center"><sub>0.3.0 面板实录 · 本地演示环境 · 更多选项按需展开</sub></p>
+<p align="center"><sub>v0.3.0 界面预览 · 本地演示环境 · 更多选项按需展开</sub></p>
 
-**对话归档** — 将当前对话或历史列表导出为 Markdown、JSON、TXT，也可拆成参考材料分片。<br>
-**公式保真** — 复制 TeX 源码，区分行内与独立公式，不夹带 KaTeX / MathML 的渲染副本。<br>
-**按需运行** — 默认不持续扫描页面；复制时处理选区，导出时才请求数据，首次打开才创建面板。
+**对话归档** — 将当前对话或可访问的历史导出为 Markdown、JSON、TXT 或参考材料分片。<br>
+**公式复制** — 框选复制或使用已识别的回复复制按钮，保留行内、独立公式的 TeX，也处理公式与代码混排的回复。<br>
+**按需运行** — 复制时处理公式，导出时才读取数据，首次打开才创建完整面板。
+
+本文对应 **v0.3.4**，当前页面复制兼容修复见 [0.3.4 说明](docs/V0.3.4.md)。OmniGPT 是**用户脚本**，不是独立浏览器扩展；需要先安装 Tampermonkey 等脚本管理器扩展。
 
 ## 开始使用
 
-1. 在浏览器安装 [Tampermonkey](https://www.tampermonkey.net/) 或兼容的用户脚本管理器。
-2. 打开 **[GitHub 安装地址](https://raw.githubusercontent.com/sakur7a/OmniGPT/main/OmniGPT.user.js)**，确认安装。也可从 [Greasy Fork](https://greasyfork.org/zh-CN/scripts/590463-omnigpt-chatgpt-export-latex-copy) 安装，以该站实际发布的版本为准。
-3. 刷新 ChatGPT。点击右下角 **OmniGPT** 打开面板；窄屏时入口收拢为右侧 **O**。
+### 安装
 
-> 更新脚本后，也需要刷新已打开的 ChatGPT 标签页，再重新复制内容。请只保留一份启用的 OmniGPT。
+1. 在浏览器安装 [Tampermonkey](https://www.tampermonkey.net/)。主要适配目标是 Chrome / Edge 与 Tampermonkey。
+2. 打开 **[GitHub Raw 安装地址](https://raw.githubusercontent.com/sakur7a/OmniGPT/main/OmniGPT.user.js)**，在管理器中确认安装。也可使用 [Greasy Fork](https://greasyfork.org/zh-CN/scripts/590463-omnigpt-chatgpt-export-latex-copy)，以该站实际发布的版本为准。
+3. 确认 OmniGPT 已启用，再刷新 [chatgpt.com](https://chatgpt.com/) 上已有的对话。脚本也匹配旧版 `chat.openai.com` 域名。
+4. 点击右下角 **OmniGPT** 打开面板；窄窗口时入口收拢为右侧 **O**。面板标题旁显示当前页面加载的脚本版本。
 
-## 复制：保留公式源码
+面板目前使用中文标签。请只保留一份启用的 OmniGPT，避免多份复制处理逻辑互相影响。
 
-选中含公式的回复并复制，得到可继续编辑的**纯文本 Markdown**，而不是公式图片或网页渲染碎片。
+### 更新已有安装
 
-| 操作 | 结果 |
+1. 打开油猴管理面板，找到 **OmniGPT**，对这条脚本执行**检查更新**；具体名称和位置随管理器版本、语言而异。
+2. 确认可用更新，并查看已安装版本。自动检查由管理器调度，GitHub 推送后不会保证立即更新本机脚本。
+3. **刷新接下来要使用的每个 ChatGPT 标签页**，重新打开面板核对加载版本，再复制一次内容。
+
+本仓库生成脚本的 `@updateURL` 与 `@downloadURL` 都指向上方 GitHub Raw 地址。仍应以管理器实际记录的更新源为准：若安装项使用 Greasy Fork 更新源，就需要该站先发布对应版本。**GitHub Release 与 Greasy Fork 不一定同步更新。** 未检测到更新时，可通过同一 GitHub 安装地址更新现有安装，确认版本后重试。维护者的同步配置见 [RELEASING.md](docs/RELEASING.md)。
+
+## 复制公式与代码
+
+| 操作 | 范围与结果 |
 | :--- | :--- |
-| 框选后 `Ctrl+C` / `⌘C` | 复制选中内容，保留其中的公式、代码和基础 Markdown 结构 |
-| 双击公式 | 复制完整公式，自动保留行内或独立显示形式 |
-| `Alt` / `Option` ＋双击公式 | 只复制 TeX 源码，不加定界符，适合粘进已有公式环境 |
+| 框选回复后 `Ctrl+C` / `⌘C` | 复制选区，保留可恢复的公式和基础 Markdown 结构；只选中渲染公式的一部分时，也会恢复该公式的完整 TeX |
+| 点击 ChatGPT 回复下方的**复制按钮** | 对已识别且含支持公式的回复操作，按所选公式格式复制该条回复的助手正文块 |
+| 双击渲染公式 | 复制完整公式，保留行内或独立显示形式 |
+| `Alt` / `Option` ＋双击公式 | 只复制 TeX 源码，不附加定界符 |
+| 面板中的**复制 Markdown** | 将当前对话复制为 Markdown；仅在**当前对话**范围可用 |
 
-例如，一段包含两种公式的回复会复制为：
+框选复制与已识别的回复复制按钮，均处理渲染公式及正文中的原始 `\(...\)` / `\[...\]` 公式。行内代码、代码块和转义后的字面定界符受到保护。不含支持公式的普通选区、编辑器和输入框选区、代码复制按钮、未识别的回复操作保留原生行为。整段含公式的选区还会将标题、列表、链接、代码和基础表格等结构序列化为 Markdown。
+
+### 选择公式格式
+
+在 **更多选项 → 公式复制** 中选择：
+
+| 设置 | 行内公式 | 独立公式 |
+| :--- | :--- | :--- |
+| **Markdown**，默认 | `$x_i$` | TeX 前后分别独占一行的 `$$` |
+| **LaTeX** | `\(x_i\)` | TeX 前后的 `\[` 与 `\]` |
+
+例如，Markdown 复制结果为：
 
 ```markdown
-设序列为 $x_1, \ldots, x_n$，其均值为：
+不等式为 $5\leq6\leq7$，均值为：
 
 $$
 \bar{x} = \frac{1}{n} \sum_{k=1}^{n} x_k
 $$
+
+代码示例 `\(literal\)` 仍保持为代码。
 ```
 
-在 **更多选项 → 公式复制** 中，可以切换为 LaTeX 定界符 `\(…\)` / `\[…\]`。普通文本选区和输入框里的复制保持原生行为；只有需要增强原生选区引用时，才开启默认关闭的**引用兼容**。
+公式格式会跨刷新保存。若之前选过 **LaTeX**，出现 `\(...\)` 可能就是预期格式。面板中的**复制 Markdown** 始终将可识别的数学定界符转换为 Markdown，不受该选项影响。通过 API 下载的文件保留原始正文已有的定界符；页面采集导出使用 Markdown 序列化。
 
-<details>
-<summary>公式复制的几个边界</summary>
+`G_k` 与 `G\_k` 保持原义，不擅自互换。渲染器未提供可靠 TeX 源码时，不会用公式朗读标签猜测源码。可选的**引用兼容**默认关闭，仅在需要增强 ChatGPT 选区引用时开启；上述两种复制入口不需要开启它。详见 [复制机制说明](docs/CLIPBOARD.md)。
 
-- 选中公式的一部分，也会恢复该公式的完整 TeX；不扩展选区外的普通正文。
-- `G_k` 与 `G\_k` 保持原义，不擅自互换。没有可靠源码时，不把公式朗读标签当成 TeX。
-- 此设置控制页面公式的复制。API 导出保留原文已有定界符，不对整篇正文做正则替换。
-- 自 v0.3.2 起，已识别的 ChatGPT 回复原生复制按钮在检测到公式时也会采用「公式复制」设置；普通回复和未识别的页面布局仍走原生行为。面板中的**复制 Markdown** 会将 API 原文的数学分隔符转换为 Markdown 美元符格式，不改变下载导出的原始正文。
+## 导出对话
 
-当前页面结构与混合公式修复见 [0.3.4 修复说明](docs/V0.3.4.md)。此前行为见 [v0.3.2 公式复制修复说明](docs/V0.3.2.md) 和 [原有公式规则](docs/V0.3.0.md)。
-
-</details>
-
-## 导出：选择范围和格式
-
-打开面板，选择**导出范围**和**文件格式**，点击**导出文件**。只想把当前对话带到笔记或另一段聊天中，点击**复制 Markdown**即可。
+1. 打开面板，选择**导出范围**：当前对话或历史对话。
+2. 选择**文件格式**，按需调整**更多选项**，点击**导出文件**。
+3. 查看进度与警告；需要停止时点击**取消**。关闭面板也会取消正在读取的任务。
+4. 若生成多个参考材料分片，逐个点击文件名保存；关闭面板会释放尚未保存的分片。
 
 | 格式 | 适合用途 |
 | :--- | :--- |
-| **Markdown** `.md` | 笔记、知识库、版本管理；保留正文中的公式和代码 |
-| **JSON** `.json` | 程序处理；保留结构化正文、来源及警告信息 |
-| **TXT** `.txt` | 纯文本阅读与搜索；API 正文原有的 Markdown 标记仍可能保留 |
-| **参考材料分片** `.md` | 将长对话整理为可上传的参考材料，按消息边界拆分 |
+| **Markdown** `.md` | 笔记、知识库、版本管理，保留正文中的公式和代码 |
+| **JSON** `.json` | 程序处理；保留结构化对话、采集来源、完整性标记和警告 |
+| **TXT** `.txt` | UTF-8 文本阅读与搜索；API 正文原有的 Markdown 标记可能仍会保留 |
+| **参考材料分片** `.md` | 按消息边界整理可上传的参考材料；单条超长消息保持完整 |
 
-当前对话默认优先使用新版分页面 API 读取当前分支（v0.3.1 起支持长对话游标分页），接口不可用时尝试旧版接口，读取失败会标记为部分导出并回退到已加载页面；也可在**更多选项**中选择离线页面采集。历史导出可选列表返回的全部，或限制为最近 **50 / 200** 条。
+**当前对话**默认优先通过 API 读取当前分支，支持长对话分页。读取失败时可回退到可识别、已加载的页面内容，并标记为部分导出。选择**仅已加载页面（离线）**可跳过 API 读取；未适配的页面布局也可能找不到可导出的正文。
 
-读取期间显示进度与成功、失败数量，支持取消；关闭面板也会取消正在读取的任务。多个分片逐个点击保存，不自动弹出一批下载请求。
+**历史对话**读取当前账号返回的对话列表，可选择列表返回的全部条目，或其中最近的 **50 / 200** 条。不扫描其他工作区，也不保证包含未列出的归档或项目内对话。结果会保留成功读取的对话和失败明细；若全部读取失败，不生成看似成功的空归档。
 
-> **导出不等于完整账号备份。** 页面采集可能缺失屏幕外消息；历史范围以当前账号列表返回结果为准；图片、附件仅保留可用引用或占位，不打包原文件。读取失败和完整性警告会保留在导出结果中。
+> **导出文件是归档或参考材料，不是完整账号备份，也不能恢复 ChatGPT 原生聊天记录。** 页面采集可能缺失未加载内容，API、列表覆盖范围及分页安全上限仍有限制。图片和附件只保留可用引用或占位，不打包二进制原文件；完整性警告会留在结果中。
 
-## 轻量运行，数据留在本地
+## 面板配置
 
-没有广告、遥测或第三方上传。复制不请求后端，也不读取剪贴板；导出仅向当前 ChatGPT 站点请求数据，文件在浏览器本地生成。
+| 选项 | 默认值 | 作用 |
+| :--- | :--- | :--- |
+| 导出范围 | 当前对话 | 选择当前对话或可访问的历史列表 |
+| 文件格式 | Markdown | 选择下载格式；复制 Markdown 的格式固定不变 |
+| 读取方式 | 完整对话优先 | 仅适用于当前对话；可改为只采集已加载页面 |
+| 历史数量 | 列表返回的全部 | 仅适用于历史对话；可限制为 50 / 200 条 |
+| 包含来源和导出时间 | 开启 | 控制文本、Markdown 及参考分片的可选元数据；JSON 保留结构，警告不受影响 |
+| 公式复制 | Markdown | 控制框选、双击及已识别回复按钮的公式定界符 |
+| 引用兼容 | 关闭 | 可选的选区文本兼容，用于引用流程 |
 
-默认不安装持续页面观察器、不轮询、不缓存整页公式，也不全局接管网络、剪贴板或浏览器选区方法。面板使用原生 DOM 和 CSS，没有 UI 框架、外部字体或第三方运行时依赖。
+文件格式、元数据、公式格式与引用兼容保存在当前站点的浏览器本地存储中；范围、读取方式和历史数量在新一次页面加载时恢复默认。这些设置不通过账号同步。
 
-大批量导出仍需要内存与处理时间，并非零开销。首次导出较多历史时，建议先用最近 50 条确认结果。
+## 兼容性与隐私
+
+- **主要适配目标：** Chrome / Edge、Tampermonkey 和 ChatGPT 网页版。仅匹配 `https://chatgpt.com/*`、`https://chat.openai.com/*`，不向子框架注入。
+- **覆盖范围：** Firefox / Violentmonkey、独立桌面客户端和移动端没有完整兼容矩阵；单一环境成功不代表所有浏览器都已验收。
+- **页面变化：** ChatGPT 的 DOM 和历史接口不是稳定公共 API。未知布局或操作可能保留原生复制，或无法完成页面导出；复杂表格、纯图片选区及缺少 TeX 源码的公式不保证完整还原。
+- **粘贴端：** 支持的数学复制只写入 `text/plain`，不夹带 KaTeX HTML / MathML；目标编辑器及其插件仍可能转换这些文本。
+
+脚本没有广告、遥测或向第三方上传对话的逻辑。框选复制、已识别的回复复制按钮和公式双击不读取剪贴板或请求后端；面板的复制 Markdown 沿用当前对话导出路径，在完整对话优先模式下可能读取对话 API。API 读取复用当前 ChatGPT 登录会话，只向 ChatGPT 站点请求数据；转换和文件生成在浏览器本地进行，无需 API Key。
+
+默认不持续观察、轮询或缓存整页公式，也不全局替换网络、Clipboard API 或选区方法；没有第三方运行时依赖。大批量归档仍会消耗时间和内存，不确定时建议先导出 50 条。
 
 ## 常见问题
 
 <details>
-<summary><strong>GitHub 已有新版，为什么油猴仍提示没有更新？</strong></summary>
+<summary><strong>没有入口、版本仍旧，或复制仍是反斜杠定界符？</strong></summary>
 
-检查已安装脚本的版本和更新来源。GitHub Raw 安装版从仓库获取更新；Greasy Fork 安装版需要该站先发布对应版本。**GitHub Release 成功不代表 Greasy Fork 已同步。**
-
-可通过上方 GitHub 安装地址更新，确认版本后刷新 ChatGPT。维护者的一次性同步设置见 [发布说明](docs/RELEASING.md)。
+确认管理器与正确脚本已在支持的域名启用，只保留一份启用的 OmniGPT，更新后刷新源标签页。在面板核对版本；需要美元符格式时选择**更多选项 → 公式复制 → Markdown**。代码示例本来就保持字面形式。若回复操作未被识别，可尝试框选复制、双击公式或面板的复制 Markdown。更新不会改写剪贴板中已有的内容。
 
 </details>
 
 <details>
-<summary><strong>粘贴到 Obsidian、微信或其他编辑器，格式还会变化吗？</strong></summary>
+<summary><strong>导出不完整或失败？</strong></summary>
 
-OmniGPT 处理的含公式选区只写入 `text/plain`，避免公式的 HTML 与 MathML 副本混入。目标编辑器或其插件仍可能继续转换这些纯文本，脚本不能保证所有粘贴端表现完全一致。
-
-排查时先更新脚本、刷新 ChatGPT，再查看 **更多选项 → 公式复制**：之前保存的 LaTeX 选项仍会复制为反斜杠圆括号形式。若原生按钮因页面结构变化未被识别，可以改用框选 Ctrl+C、双击公式或面板中的**复制 Markdown**。旧剪贴板内容不会随升级自动修复。
+先阅读面板和文件中的警告。页面方式只能采集已加载且可识别的内容；历史范围以返回列表为准。确认 ChatGPT 登录会话可用，再缩小范围重试；接口或页面布局变化仍可能需要脚本更新。JSON 与参考分片都不是原生聊天恢复文件。
 
 </details>
 
-<details>
-<summary><strong>导出的 JSON 或参考材料分片能恢复原生聊天记录吗？</strong></summary>
+反馈时请在 [GitHub Issues](https://github.com/sakur7a/OmniGPT/issues) 附上脚本、浏览器和管理器版本，具体复制或导出入口、简短非私密示例、预期与实际纯文本，以及脱敏错误。不要提交会话 cookie、access token 或私密对话。
 
-不能。JSON 是整理后的对话数据，参考材料分片是可供模型阅读的 Markdown，均不是 ChatGPT 原生聊天恢复文件。DOM 回退、列表覆盖范围和附件保留方式也会影响完整性。
+## 本地开发
 
-</details>
-
-<details>
-<summary><strong>支持哪些浏览器？遇到问题如何反馈？</strong></summary>
-
-主要面向 Chrome、Edge 与 Tampermonkey，脚本匹配 `chatgpt.com` 和旧版 `chat.openai.com`，不在子框架注入。自动回归使用 Chromium、代表性页面和模拟 API；不等同于桌面应用、ChatGPT 登录态或 Firefox / Violentmonkey 的完整端到端覆盖。
-
-请在 [GitHub Issues](https://github.com/sakur7a/OmniGPT/issues) 提供脚本版本、浏览器版本、具体操作与脱敏后的错误信息。**不要提交 access token、会话 cookie 或私密对话。**
-
-</details>
-
-## 开发与文档
-
-[v0.3.1 Web API 兼容性说明](docs/V0.3.1.md) · [当前功能与设计取舍](docs/V0.3.0.md) · [复制机制与性能说明](docs/CLIPBOARD.md) · [发布与同步](docs/RELEASING.md)
-
-<details>
-<summary>本地构建与测试</summary>
-
-建议使用与 CI 一致的 Node.js 24。修改 `src/`，不要直接编辑生成的 `OmniGPT.user.js`。
+建议使用与 CI 一致的 **Node.js 24**。修改 `src/`，安装用的 `OmniGPT.user.js` 由构建生成。Node 命令使用内置模块；Playwright 仅用于开发阶段的浏览器测试。
 
 ```bash
 git clone https://github.com/sakur7a/OmniGPT.git
 cd OmniGPT
-npm run check       # 构建、元数据校验、语法检查和 Node 回归
+npm run build           # 生成 OmniGPT.user.js
+npm run verify:release  # 校验版本与更新元数据
+npm run check           # 构建、元数据、语法检查和 Node 回归
 ```
 
-浏览器测试仅用于开发，不打包进安装脚本。创建并激活 Python 虚拟环境后运行：
+<details>
+<summary>浏览器测试及其验证边界</summary>
+
+先创建并激活 Python 3 虚拟环境：`python -m venv .venv`；PowerShell 使用 `.venv\Scripts\Activate.ps1`，bash/zsh 使用 `source .venv/bin/activate`。然后运行：
 
 ```bash
 python -m pip install playwright==1.57.0
@@ -161,14 +179,41 @@ python test/browser-v030.py
 python test/browser-current-dom.py
 ```
 
-核心源码：`src/clipboard.js` 处理复制，`src/exporter.js` 处理采集与导出，`src/omnigpt.js` 负责面板。CI 会在发布前执行 Node 和浏览器回归测试。
+三个脚本也支持用 `CHROMIUM_PATH` 指定已有 Chromium 可执行文件，例如 PowerShell 中的 `$env:CHROMIUM_PATH = 'C:\path\to\chrome.exe'`。Linux CI 使用 `python -m playwright install --with-deps chromium` 同时安装所需系统依赖。
+
+- **Node 回归：** 公式转换与幂等性、导出格式、分支、分页、重试及模拟 API 响应。
+- **浏览器回归：** 代表性 DOM 和模拟站点 API，配合真实 Chromium 键盘、剪贴板/MIME、粘贴、下载和 UI 检查；当前页面结构测试包含两个复制入口、代码/混合内容保护和多正文块。
+- **验证边界：** 这些浏览器测试不登录 ChatGPT，也不启动桌面粘贴目标；不能据此宣称真实页面或跨浏览器全场景兼容。
+
+现有 [CI 工作流](.github/workflows/build-userscript.yml) 会对配置范围内的源码、构建和测试改动在发布前运行这些检查；只改 README 不匹配其 push 路径过滤条件。
 
 </details>
+
+```text
+OmniGPT/
+├─ OmniGPT.user.js              # 生成的可安装用户脚本
+├─ src/
+│  ├─ clipboard.js              # 公式、选区与回复复制
+│  ├─ exporter.js               # API/页面采集与导出格式
+│  └─ omnigpt.js                # 面板、选项与任务控制
+├─ scripts/
+│  ├─ build.mjs                 # 拼接构建用户脚本
+│  └─ verify-release.mjs        # 校验版本和更新地址
+├─ test/
+│  ├─ *.test.mjs               # Node 回归
+│  ├─ browser-regression.py
+│  ├─ browser-v030.py
+│  └─ browser-current-dom.py
+├─ docs/                       # 设计说明、版本说明与演示资源
+└─ .github/workflows/           # 构建、检查与现有发布流程
+```
+
+**相关文档：** [0.3.4 复制修复](docs/V0.3.4.md) · [Web API 兼容性](docs/V0.3.1.md) · [复制机制](docs/CLIPBOARD.md) · [早期设计说明](docs/V0.3.0.md) · [发布与 Greasy Fork 同步](docs/RELEASING.md)。`README.md` 与 `README_EN.md` 为相同的英文指南，本文是中文入口。
 
 ---
 
 ### 来源与许可
 
-导出逻辑基于此前的 `chatgpt-exporter` 项目整理。LaTeX 兼容思路来自 ChatGPT Better TeX Quote（schweigen，MIT）与 TexCopyer（yjy / blime，GPL-3.0）。完整说明见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+导出逻辑基于此前的 `chatgpt-exporter` 项目整理。LaTeX 兼容思路来自 ChatGPT Better TeX Quote（schweigen，MIT）与 TexCopyer（yjy / blime，GPL-3.0）。详见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
 [GPL-3.0-or-later](LICENSE) · [问题反馈](https://github.com/sakur7a/OmniGPT/issues) · [版本记录](https://github.com/sakur7a/OmniGPT/releases)

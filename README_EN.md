@@ -1,11 +1,11 @@
-<p align="right"><a href="README.md">简体中文</a> · <strong>English</strong></p>
+<p align="right"><a href="README_ZH.md">简体中文</a> · <strong>English</strong></p>
 
 <div align="center">
 
 <h1>OmniGPT</h1>
 
 <p><strong>Archive your chats. Keep your math editable.</strong></p>
-<p>A lightweight userscript for exporting ChatGPT conversations and copying LaTeX reliably.</p>
+<p>A lightweight userscript for exporting ChatGPT conversations and copying editable LaTeX. Runs in a userscript manager such as Tampermonkey.</p>
 
 <p>
   <a href="https://raw.githubusercontent.com/sakur7a/OmniGPT/main/OmniGPT.user.js"><strong>Install Script</strong></a>
@@ -27,131 +27,149 @@
 <p align="center">
   <img src="docs/assets/readme-preview.webp" width="820" alt="OmniGPT 0.3.0 panel in light and dark themes, showing export scope, file format, advanced options, export and copy actions">
 </p>
-<p align="center"><sub>OmniGPT 0.3.0 panel · local demo environment · advanced options expanded on demand</sub></p>
+<p align="center"><sub>Interface preview from v0.3.0 · local demo environment · advanced options expanded on demand</sub></p>
 
-**Conversation export** — Export the current chat or conversation history as Markdown, JSON or TXT, or split long histories into reference-material chunks.<br>
-**Math fidelity** — Copy the original TeX source, preserving inline vs. display math without carrying KaTeX / MathML render fragments.<br>
-**On-demand runtime** — No continuous page scanning by default. Math is processed when you copy it, exports run only when requested, and the full panel is created only when first opened.
+**Conversation export** — Save the current conversation or accessible history as Markdown, JSON, TXT or reference-material chunks.<br>
+**Math copying** — Use selection copy or a recognized reply-copy button to keep inline/display TeX, including replies that mix formulas and code.<br>
+**On-demand runtime** — Math is processed when you copy; exports run when requested; the full panel is created on first opening.
+
+This guide describes **v0.3.4**. See the [0.3.4 changes](docs/V0.3.4.md) for the current-page copy repair. OmniGPT is a **userscript**, not a standalone browser extension; the userscript manager is the browser extension you install first.
 
 ## Getting started
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/) or another compatible userscript manager.
-2. Open the **[GitHub install URL](https://raw.githubusercontent.com/sakur7a/OmniGPT/main/OmniGPT.user.js)** and confirm installation. You can also install from [Greasy Fork](https://greasyfork.org/en/scripts/590463-omnigpt-chatgpt-export-latex-copy); use the version actually published there.
-3. Reload ChatGPT. Click **OmniGPT** in the lower-right corner; on narrow layouts it collapses into an **O** button on the right side.
+### Install
 
-> After updating the userscript, reload any ChatGPT tabs that were already open before copying again. Keep only one OmniGPT installation enabled.
+1. Install [Tampermonkey](https://www.tampermonkey.net/) in your browser. Chrome / Edge with Tampermonkey is the primary target.
+2. Open the **[GitHub Raw install URL](https://raw.githubusercontent.com/sakur7a/OmniGPT/main/OmniGPT.user.js)** and confirm installation in the manager. Alternatively, install from [Greasy Fork](https://greasyfork.org/en/scripts/590463-omnigpt-chatgpt-export-latex-copy), checking the version published there.
+3. Make sure OmniGPT is enabled, then reload an existing conversation on [chatgpt.com](https://chatgpt.com/). The legacy `chat.openai.com` host is also matched.
+4. Click **OmniGPT** in the lower-right corner to open the panel. On narrow windows it becomes an **O** button on the right side. The panel header shows the loaded script version.
 
-## Copy math without losing the source
+The panel currently uses Chinese labels; English equivalents below include the relevant labels. Keep only one OmniGPT installation enabled to avoid competing copy handlers.
 
-Select a response containing formulas and copy it to get **plain-text Markdown with editable TeX**, instead of an image or fragments from the rendered formula tree.
+### Update an existing installation
 
-| Action | Result |
+1. Open Tampermonkey's dashboard, find **OmniGPT**, and use the manager's **Check for updates** action for that script. The wording and location can vary by manager version and language.
+2. Confirm any offered update, then check the installed version. Automatic checks follow the manager's schedule; a GitHub push does not imply an immediate local update.
+3. **Reload every ChatGPT tab you will use**, reopen the panel to check its loaded version, then copy the content again.
+
+The generated script's `@updateURL` and `@downloadURL` point to the GitHub Raw URL above. Check the update source actually recorded in your manager: an installation using a Greasy Fork update source depends on the version published there. **GitHub Releases and Greasy Fork do not necessarily update together.** If no update is offered, use the same GitHub install URL to update the existing installation and verify the version before retrying. Maintainer sync instructions are in [RELEASING.md](docs/RELEASING.md).
+
+## Copy formulas and code
+
+| Action | Scope and result |
 | :--- | :--- |
-| Select text, then `Ctrl+C` / `⌘C` | Copies the selection while preserving formulas, code and basic Markdown structure |
-| Double-click a formula | Copies the complete formula while preserving whether it was inline or display math |
-| `Alt` / `Option` + double-click | Copies raw TeX only, without delimiters, for pasting into an existing math environment |
+| Select a response, then `Ctrl+C` / `⌘C` | Copies the selection with recoverable formulas and basic Markdown structure; a partial rendered-formula selection restores that formula's full TeX |
+| Click ChatGPT's **Copy** button below a reply | For a recognized action with supported math, copies that reply's assistant body blocks using the selected formula style |
+| Double-click a rendered formula | Copies the complete formula, preserving inline/display form |
+| `Alt` / `Option` + double-click | Copies only the formula's raw TeX, without delimiters |
+| Panel **Copy Markdown (复制 Markdown)** | Copies the current conversation as Markdown; available only for **Current conversation (当前对话)** |
 
-For example, a response containing inline and display math is copied as:
+Selection copy and recognized reply-copy actions handle rendered formulas and raw `\(...\)` / `\[...\]` formulas in prose. Inline code, code blocks and escaped literal delimiters are protected. Ordinary selections without supported math, editor/input-field selections, code-copy buttons and unrecognized reply actions keep native behavior. Selecting a whole reply containing math may also serialize its headings, lists, links, code and basic tables as Markdown.
+
+### Choose the formula format
+
+Under **More options (更多选项) → Formula copy (公式复制)**:
+
+| Setting | Inline formula | Display formula |
+| :--- | :--- | :--- |
+| **Markdown** — default | `$x_i$` | `$$` on separate lines around the TeX |
+| **LaTeX** | `\(x_i\)` | `\[` and `\]` around the TeX |
+
+For example, Markdown copy produces:
 
 ```markdown
-Let the sequence be $x_1, \ldots, x_n$. Its mean is:
+The chain is $5\leq6\leq7$. Its mean is:
 
 $$
 \bar{x} = \frac{1}{n} \sum_{k=1}^{n} x_k
 $$
+
+The code example `\(literal\)` stays code.
 ```
 
-Under **More options → Formula copy**, you can switch to LaTeX delimiters `\(…\)` / `\[…\]`. Normal text selections and copying inside input fields remain native. The optional **Quote compatibility** mode is off by default and is only needed when you want ChatGPT's native selection-to-quote flow to preserve TeX as well.
+The selected style persists across page reloads. Seeing `\(...\)` can be intentional if **LaTeX** was selected earlier. The panel's **Copy Markdown** always normalizes recognized math delimiters to Markdown, regardless of that setting. API-based file exports retain the source body's existing delimiters; page-based exports use the Markdown serializer.
 
-<details>
-<summary>Math-copy behavior and edge cases</summary>
+`G_k` and `G\_k` retain their original meanings. If a renderer exposes no reliable TeX source, OmniGPT does not guess it from spoken accessibility labels. Optional **Quote compatibility (引用兼容)** is off by default; enable it only for ChatGPT's selection-to-quote flow. It is not required for either copy path above. See [clipboard behavior](docs/CLIPBOARD.md) for details.
 
-- Selecting only part of a rendered formula still restores the full TeX for that formula, without expanding surrounding prose outside the selection.
-- `G_k` and `G\_k` keep their original meaning; OmniGPT does not rewrite one into the other. If no reliable TeX source is available, spoken accessibility text is not guessed as TeX.
-- The formula-copy setting affects formulas copied from the page. API exports preserve the source text and its existing delimiters instead of running regex replacements across the whole document.
-- Since v0.3.2, supported ChatGPT reply-copy buttons also use the selected formula-copy style when a formula is detected. Ordinary responses and unknown UI layouts still use native copy. **Copy Markdown** in the OmniGPT panel normalizes recognized API math delimiters to Markdown dollar syntax, without changing downloaded API content.
+## Export conversations
 
-See the [0.3.4 current-DOM repair](docs/V0.3.4.md), [v0.3.2 math-copy compatibility](docs/V0.3.2.md) and the [earlier formula rules](docs/V0.3.0.md) for details.
+1. Open the panel and choose **Export scope (导出范围)**: current conversation or history.
+2. Choose **File format (文件格式)**, adjust **More options (更多选项)** if needed, then click **Export file (导出文件)**.
+3. Watch the progress and warnings. Use **Cancel (取消)** to stop; closing the panel also cancels an active read.
+4. If several reference chunks are generated, click each filename to save it. Closing the panel releases unsaved chunks.
 
-</details>
-
-## Export conversations by scope and format
-
-Open the panel, choose an **Export scope** and **File format**, then click **Export file**. If you only want to move the current conversation into notes or another chat, use **Copy Markdown**.
-
-| Format | Best for |
+| Format | Intended use |
 | :--- | :--- |
-| **Markdown** `.md` | Notes, knowledge bases and version control; keeps formulas and code in the body |
-| **JSON** `.json` | Programmatic processing; keeps structured content, source information and warnings |
-| **TXT** `.txt` | Plain-text reading and search; Markdown syntax already present in API text may remain |
-| **Reference chunks** `.md` | Splitting long histories into uploadable reference files at message boundaries |
+| **Markdown** `.md` | Notes, knowledge bases and version control, with formulas and code in the body |
+| **JSON** `.json` | Structured conversation data, acquisition source, completeness flags and warnings |
+| **TXT** `.txt` | UTF-8 text for reading/search; Markdown already in API text may remain |
+| **Reference chunks (参考材料分片)** `.md` | Message-boundary chunks for uploading as reference material; oversized single messages stay intact |
 
-For the current conversation, OmniGPT uses the newer paginated API to retrieve the active branch (v0.3.1), falls back to the legacy endpoint if unavailable, and explicitly marks DOM fallback as partial when an API read fails. You can also choose offline page capture under **More options**. History export can use everything returned by the current conversation list or be limited to the most recent **50 / 200** items.
+**Current conversation** defaults to API-first retrieval of the active branch, including paginated long conversations. If the read fails, OmniGPT can fall back to recognizable, already-loaded page content and marks it as partial. Choose **Loaded page only / offline (仅已加载页面（离线）)** to skip API retrieval. Unsupported page layouts may expose no exportable body.
 
-During export, the panel shows progress plus success and failure counts. You can cancel the task, and closing the panel also cancels an in-progress read. When a reference bundle produces multiple parts, they are saved individually rather than triggering a burst of automatic downloads.
+**History** reads the current account's returned conversation list. Choose all returned entries or the most recent **50 / 200** in that list. It does not scan other workspaces or guarantee that archived/project conversations omitted from the list are included. Successful reads and failure details are retained; if all reads fail, no successful-looking empty archive is produced.
 
-> **An export is not a complete account backup.** Page capture can miss messages that are not loaded in the DOM; history coverage depends on what the current account list returns; images and attachments are represented by available references or placeholders rather than bundled binary files. Read failures and completeness warnings are preserved in exported results.
+> **Exports are reference/archival files, not a full account backup or native ChatGPT history restore.** Page capture can miss unloaded content; API/list coverage and pagination limits still apply. Images and attachments are represented by available references or placeholders, not bundled binaries. Completeness warnings remain in the result.
 
-## Lightweight by default, data stays local
+## Panel options
 
-OmniGPT has no ads, analytics, telemetry or third-party uploads. Copying does not call the backend and does not read your clipboard. Export requests go only to the current ChatGPT site, and generated files are created locally in the browser.
+| Option | Default | Meaning |
+| :--- | :--- | :--- |
+| Export scope (导出范围) | Current conversation | Select current conversation or accessible history |
+| File format (文件格式) | Markdown | Select a download format; Copy Markdown remains Markdown |
+| Read method (读取方式) | API-first (完整对话优先) | Current conversation only; optionally use loaded-page capture |
+| History count (历史数量) | All returned entries | History only; optionally limit to 50 / 200 |
+| Include source/time (包含来源和导出时间) | On | Controls optional metadata in text/Markdown output and reference chunks; JSON keeps its structure and warnings remain |
+| Formula copy (公式复制) | Markdown | Controls selection, double-click and recognized reply-copy formula delimiters |
+| Quote compatibility (引用兼容) | Off | Optional scoped selection-text compatibility for quoting |
 
-By default OmniGPT does not install a continuous page observer, poll the page, cache every formula, or globally take over networking, the Clipboard API, or browser selection methods. The UI uses native DOM and CSS with no framework, external font or third-party runtime dependency.
+File format, metadata, formula style and quote compatibility are saved in the current site's local browser storage. Scope, read method and history count return to defaults on a new page load. Settings are not account-synced.
 
-Large history exports still require memory and processing time, so they are not free. For a first large export, trying the most recent 50 conversations is a useful sanity check.
+## Compatibility and privacy
 
-## FAQ
+- **Primary target:** ChatGPT web in Chrome / Edge with Tampermonkey. Only `https://chatgpt.com/*` and `https://chat.openai.com/*` match; subframes are excluded.
+- **Coverage limits:** Firefox / Violentmonkey, standalone desktop clients and mobile setups do not have a complete compatibility matrix. A successful check on one setup does not establish all-browser coverage.
+- **Page changes:** ChatGPT's DOM and history endpoints are not stable public APIs. Unknown layouts/actions can retain native copying or fail page export. Complex tables, image-only selections and unavailable TeX sources may not round-trip.
+- **Paste targets:** Supported math copying writes `text/plain`, without KaTeX HTML / MathML. Destination editors or plugins can still transform that text.
+
+The userscript has no ads, telemetry or third-party conversation uploads. Selection copy, recognized reply-copy actions and formula double-clicks do not read your clipboard or call the backend. The panel's Copy Markdown follows the current-conversation export path, so API-first mode can request conversation data. API reads reuse the current ChatGPT login session and request data only from the ChatGPT site; formatting and file generation happen locally. No API key is required.
+
+By default there is no continuous page observer, polling, whole-page formula cache or global replacement of networking, Clipboard API or selection methods. There are no third-party runtime dependencies. Large archives still consume time and memory; start with 50 conversations if unsure.
+
+## Troubleshooting
 
 <details>
-<summary><strong>GitHub has a newer version. Why does Tampermonkey still say there is no update?</strong></summary>
+<summary><strong>No launcher, an old version, or copying still uses backslash delimiters?</strong></summary>
 
-Check both the installed version and its update source. Installations from GitHub Raw update from this repository; Greasy Fork installations require the corresponding version to be published on Greasy Fork first. **A successful GitHub Release does not mean Greasy Fork has already synced it.**
-
-You can update from the GitHub install link above, verify the version, then reload ChatGPT. Maintainer-only one-time sync setup is documented in [RELEASING.md](docs/RELEASING.md).
+Check that the manager and the correct script are enabled on the supported host, keep one OmniGPT installation enabled, update it, and reload the source tab. Check the version in the panel, then choose **更多选项 → 公式复制 → Markdown** if you want dollar delimiters. Code examples remain literal by design. If a reply action is unrecognized, try selection copy, a formula double-click or the panel's Copy Markdown action. An update does not change text already in the clipboard.
 
 </details>
 
 <details>
-<summary><strong>Can formatting still change when pasting into Obsidian, WeChat or another editor?</strong></summary>
+<summary><strong>An export is partial or fails?</strong></summary>
 
-For supported math selections, OmniGPT writes only `text/plain` so that KaTeX HTML and MathML copies do not get mixed into the clipboard item. The destination editor or one of its plugins may still transform that plain text, so OmniGPT cannot guarantee identical rendering in every paste target.
-
-When debugging, update OmniGPT, reload ChatGPT, and check **More options → Formula copy**: a previously saved LaTeX style will still use slash-parenthesis delimiters. If the native button is not recognized, use selection Ctrl+C, double-click or OmniGPT's Copy Markdown. Existing clipboard contents are not retroactively fixed by an update.
+Read the panel/file warnings. Loaded-page mode can only capture recognizable content already present in the page. History covers only returned list entries. Confirm that the ChatGPT session is usable and retry a smaller scope; API/layout changes can still require a script update. JSON and reference chunks cannot restore native chat history.
 
 </details>
 
-<details>
-<summary><strong>Can JSON exports or reference chunks restore native ChatGPT history?</strong></summary>
+For a bug report, include the script, browser and manager versions, the specific copy/export action, a short nonprivate example, expected/actual plain text and redacted errors in [GitHub Issues](https://github.com/sakur7a/OmniGPT/issues). Do not post session cookies, access tokens or private conversations.
 
-No. JSON is a normalized conversation export, and reference chunks are Markdown files intended for model-readable context. Neither is a native ChatGPT restore format. DOM fallback, list coverage and attachment handling can also affect completeness.
+## Development
 
-</details>
-
-<details>
-<summary><strong>Which browsers are supported, and how should I report an issue?</strong></summary>
-
-The primary target is Chrome / Edge with Tampermonkey. The script matches `chatgpt.com` and the legacy `chat.openai.com` host and does not inject into subframes. Automated regressions use Chromium with representative page fixtures and mocked APIs; that is not the same as full end-to-end coverage for desktop apps, authenticated ChatGPT, Firefox or Violentmonkey.
-
-Please open a [GitHub Issue](https://github.com/sakur7a/OmniGPT/issues) with the OmniGPT version, browser version, exact steps and redacted error output. **Do not post access tokens, session cookies or private conversations.**
-
-</details>
-
-## Development and documentation
-
-[Current behavior and tradeoffs](docs/V0.3.0.md) · [Clipboard and performance notes](docs/CLIPBOARD.md) · [Release and sync workflow](docs/RELEASING.md)
-
-<details>
-<summary>Local build and tests</summary>
-
-Node.js 24 is recommended to match CI. Edit files under `src/`; do not edit the generated `OmniGPT.user.js` directly.
+Use **Node.js 24** to match CI. Edit `src/`; the installable `OmniGPT.user.js` is generated. Node commands use built-in modules; Playwright is a development-only browser-test dependency.
 
 ```bash
 git clone https://github.com/sakur7a/OmniGPT.git
 cd OmniGPT
-npm run check       # build, metadata verification, syntax checks and Node regressions
+npm run build           # generate OmniGPT.user.js
+npm run verify:release  # verify version and update metadata
+npm run check           # build + metadata + syntax + Node regressions
 ```
 
-Browser tests are development-only and are not bundled into the userscript. After creating and activating a Python virtual environment:
+<details>
+<summary>Browser tests and what they verify</summary>
+
+Create and activate a Python 3 virtual environment (`python -m venv .venv`; activate with `.venv\Scripts\Activate.ps1` in PowerShell or `source .venv/bin/activate` in bash/zsh), then run:
 
 ```bash
 python -m pip install playwright==1.57.0
@@ -161,14 +179,41 @@ python test/browser-v030.py
 python test/browser-current-dom.py
 ```
 
-Core files: `src/clipboard.js` handles copying, `src/exporter.js` handles collection and export, and `src/omnigpt.js` owns the panel. CI runs both Node and browser regressions before a release is published.
+The scripts also accept `CHROMIUM_PATH` for an existing Chromium executable, for example `$env:CHROMIUM_PATH = 'C:\path\to\chrome.exe'` in PowerShell. Linux CI uses `python -m playwright install --with-deps chromium` to install system dependencies as well.
+
+- **Node regressions:** math conversion and idempotence, export formatting, branching, pagination, retries and mocked API responses.
+- **Browser regressions:** representative DOM fixtures and mocked site APIs, with actual Chromium keyboard, clipboard/MIME, paste, download and UI checks. The current-DOM suite covers both copy paths, code/mixed-content protection and multiple reply blocks.
+- **Verification boundary:** these browser fixtures do not log into ChatGPT or launch desktop paste targets. They do not establish complete live-page or cross-browser compatibility.
+
+The existing [CI workflow](.github/workflows/build-userscript.yml) runs these suites before a release for configured source/build/test changes. A README-only change does not match its push path filters.
 
 </details>
+
+```text
+OmniGPT/
+├─ OmniGPT.user.js              # generated, installable userscript
+├─ src/
+│  ├─ clipboard.js              # formulas, selections and reply-copy actions
+│  ├─ exporter.js               # API/page collection and export formats
+│  └─ omnigpt.js                # panel, options and task controls
+├─ scripts/
+│  ├─ build.mjs                 # assemble the userscript
+│  └─ verify-release.mjs        # check version and update URLs
+├─ test/
+│  ├─ *.test.mjs               # Node regressions
+│  ├─ browser-regression.py
+│  ├─ browser-v030.py
+│  └─ browser-current-dom.py
+├─ docs/                       # design notes, version notes and demo assets
+└─ .github/workflows/           # build, checks and existing release workflow
+```
+
+**Documentation:** [0.3.4 copy changes](docs/V0.3.4.md) · [Web API compatibility](docs/V0.3.1.md) · [Clipboard behavior](docs/CLIPBOARD.md) · [Earlier design notes](docs/V0.3.0.md) · [Release / Greasy Fork sync](docs/RELEASING.md). `README.md` and `README_EN.md` share the English guide; [README_ZH.md](README_ZH.md) is the Chinese guide.
 
 ---
 
 ### Credits and license
 
-The export logic was adapted from an earlier `chatgpt-exporter` project. LaTeX compatibility ideas were informed by ChatGPT Better TeX Quote (schweigen, MIT) and TexCopyer (yjy / blime, GPL-3.0). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full details.
+Export logic was adapted from the earlier `chatgpt-exporter` project. LaTeX compatibility ideas were informed by ChatGPT Better TeX Quote (schweigen, MIT) and TexCopyer (yjy / blime, GPL-3.0). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.
 
 [GPL-3.0-or-later](LICENSE) · [Report an issue](https://github.com/sakur7a/OmniGPT/issues) · [Releases](https://github.com/sakur7a/OmniGPT/releases)
