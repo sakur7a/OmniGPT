@@ -27,7 +27,6 @@
 <p align="center">
   <img src="docs/assets/readme-preview.webp" width="820" alt="OmniGPT 0.3.4 light and dark panels captured from the actual userscript in an isolated local example">
 </p>
-<p align="center"><sub>v0.3.4 actual userscript UI · isolated local example · not a signed-in ChatGPT capture</sub></p>
 
 **Conversation export** — Save the current conversation or accessible history as Markdown, JSON, TXT or reference-material chunks.<br>
 **Math copying** — Use selection copy or a recognized reply-copy button to keep inline/display TeX, including replies that mix formulas and code.<br>
