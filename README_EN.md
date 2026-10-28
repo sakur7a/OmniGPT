@@ -33,7 +33,7 @@
 **Math copying** — Use selection copy or a recognized reply-copy button to keep inline/display TeX, including replies that mix formulas and code.<br>
 **On-demand runtime** — Math is processed when you copy; exports run when requested; the full panel is created on first opening.
 
-This guide describes **v0.3.4**. See the [0.3.4 changes](docs/V0.3.4.md) for the current-page copy repair. OmniGPT is a **userscript**, not a standalone browser extension; the userscript manager is the browser extension you install first.
+This guide describes **v0.3.7**. See the [0.3.7 changes](docs/V0.3.7.md) for the code-block copy repair. OmniGPT is a **userscript**, not a standalone browser extension; the userscript manager is the browser extension you install first.
 
 ## Getting started
 
@@ -64,7 +64,7 @@ The generated script's `@updateURL` and `@downloadURL` point to the GitHub Raw U
 | `Alt` / `Option` + double-click | Copies only the formula's raw TeX, without delimiters |
 | Panel **Copy Markdown (复制 Markdown)** | Copies the current conversation as Markdown; available only for **Current conversation (当前对话)** |
 
-Selection copy and recognized reply-copy actions handle rendered formulas and raw `\(...\)` / `\[...\]` formulas in prose. Inline code, code blocks and escaped literal delimiters are protected. Ordinary selections without supported math, editor/input-field selections, code-copy buttons and unrecognized reply actions keep native behavior. Selecting a whole reply containing math may also serialize its headings, lists, links, code and basic tables as Markdown.
+Selection copy and recognized reply-copy actions handle rendered formulas and raw `\(...\)` / `\[...\]` formulas in prose. Inline code, code blocks and escaped literal delimiters are protected. Ordinary selections without supported math, selections wholly within editors or input fields, code-copy buttons and unrecognized reply actions keep native behavior. Selecting a whole reply containing math may also serialize its headings, lists, links, code and basic tables as Markdown.
 
 ### Choose the formula format
 
@@ -216,7 +216,7 @@ OmniGPT/
 └─ .github/workflows/           # build, checks and existing release workflow
 ```
 
-**Documentation:** [0.3.4 copy changes](docs/V0.3.4.md) · [Web API compatibility](docs/V0.3.1.md) · [Clipboard behavior](docs/CLIPBOARD.md) · [Earlier design notes](docs/V0.3.0.md) · [Release / Greasy Fork sync](docs/RELEASING.md). `README.md` and `README_EN.md` share the English guide; [README_ZH.md](README_ZH.md) is the Chinese guide.
+**Documentation:** [0.3.7 code-block copy changes](docs/V0.3.7.md) · [0.3.4 math-copy changes](docs/V0.3.4.md) · [Web API compatibility](docs/V0.3.1.md) · [Clipboard behavior](docs/CLIPBOARD.md) · [Earlier design notes](docs/V0.3.0.md) · [Release / Greasy Fork sync](docs/RELEASING.md). `README.md` and `README_EN.md` share the English guide; [README_ZH.md](README_ZH.md) is the Chinese guide.
 
 ---
 

@@ -357,6 +357,7 @@
     const nodes = [...new Set(Array.from(root.querySelectorAll(TURN), canonical))];
     const selected = new Set(nodes);
     const messages = [];
+    let incompleteCode = false;
     for (const node of nodes) {
       if (node.closest(EXCLUDE)) continue;
       let nested = false;
@@ -370,10 +371,12 @@
       if (!["user", "assistant"].includes(role)) continue;
       const rendered = global.OmniGPTClipboard.serializeElement(node, { mathStyle: "markdown" });
       if (!rendered?.text?.trim()) continue;
+      incompleteCode ||= rendered.incomplete;
       messages.push({ index: messages.length + 1, role, text: rendered.text, markdown: rendered.text });
     }
     return { schemaVersion: 1, title: getConversationTitle(doc), url: global.location?.href || "", exportedAt: new Date().toISOString(),
-      acquisition: "dom", partial: true, warnings: [DOM_WARNING, ASSET_WARNING], messageCount: messages.length, messages };
+      acquisition: "dom", partial: true, warnings: [DOM_WARNING, ASSET_WARNING,
+        ...(incompleteCode ? ["Some code blocks could not be fully read from the page."] : [])], messageCount: messages.length, messages };
   }
 
   async function collectCurrentConversation(doc = global.document, options = {}) {

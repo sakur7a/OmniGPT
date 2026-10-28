@@ -178,5 +178,205 @@ class CurrentDOMTests(unittest.TestCase):
         self.page.locator('#reply').click()
         self.assertEqual(self.clipboard(), 'First $'+TEX+'$\n\nSecond $y_i$')
 
+    def code_widget(self, editable=False, code='if x:\n    print(x)\n\n    return x', wrapped=True):
+        # Construct the nested PREs as ChatGPT does through DOM APIs: an HTML
+        # parser can otherwise repair the outer widget's nonstandard markup.
+        self.page.evaluate('''({editable, code, wrapped}) => {
+          const node = (tag, attrs = {}) => {
+            const el = document.createElement(tag);
+            for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, value);
+            return el;
+          };
+          const block = node(wrapped ? 'pre' : 'div', {class: 'overflow-visible! px-0!'});
+          const header = node('div', {class: 'select-none sticky'});
+          const label = node('div', {class: 'text-sm font-medium'});
+          label.textContent = 'Python';
+          const copy = node('button', {id: 'widget-copy', 'aria-label': 'Copy'});
+          copy.textContent = 'Copy';
+          header.append(label, copy);
+          const editor = node('div', {class: 'cm-editor', id: 'code-block-viewer'});
+          const scroller = node('div', {class: 'cm-scroller'});
+          const content = node(editable ? 'div' : 'pre', {class: 'cm-content'});
+          if (editable) {
+            content.setAttribute('contenteditable', 'true');
+            content.setAttribute('role', 'textbox');
+            for (const line of code.split('\\n')) {
+              const row = node('div', {class: 'cm-line'});
+              row.appendChild(document.createTextNode(line));
+              content.appendChild(row);
+            }
+          } else {
+            const value = node('code');
+            value.textContent = code;
+            content.appendChild(value);
+          }
+          scroller.append(content); editor.append(scroller); block.append(header, editor);
+          document.querySelector('#widget-mount').replaceWith(block);
+          copy.addEventListener('click', () => {nativeClicks++; void navigator.clipboard.writeText('code button');});
+        }''', {'editable': editable, 'code': code, 'wrapped': wrapped})
+
+    def test_14_readonly_current_code_widget_and_formula(self):
+        self.fixture('<p>Before</p><div id="widget-mount"></div><p>After '+formula()+'</p>')
+        self.code_widget()
+        self.both_paths('Before\n\n```python\nif x:\n    print(x)\n\n    return x\n```\n\nAfter $'+TEX+'$')
+
+    def test_15_editable_current_code_widget_and_formula(self):
+        self.fixture('<p>Before</p><div id="widget-mount"></div><p>After '+formula()+'</p>')
+        self.code_widget(editable=True)
+        self.both_paths('Before\n\n```python\nif x:\n    print(x)\n\n    return x\n```\n\nAfter $'+TEX+'$')
+        self.page.locator('#widget-copy').click()
+        self.assertEqual(self.clipboard(), 'code button')
+
+    def test_16_selection_from_code_into_math_does_not_expand_code(self):
+        self.fixture('<p>Before</p><div id="widget-mount"></div><p id="end">After '+formula()+'</p>')
+        self.code_widget(editable=True)
+        self.page.locator('.cm-content').focus()
+        self.page.evaluate('''() => {
+          const line = document.querySelectorAll('.cm-line')[1].firstChild;
+          const r = document.createRange(); r.setStart(line, 4);
+          r.setEndAfter(document.querySelector('#end .katex'));
+          getSelection().removeAllRanges(); getSelection().addRange(r);
+        }''')
+        self.page.keyboard.press('Control+c')
+        self.assertEqual(self.clipboard(), '```python\nprint(x)\n\n    return x\n```\n\nAfter $'+TEX+'$')
+
+    def test_17_selection_from_math_into_code_does_not_expand_code(self):
+        self.fixture('<p id="start">Before '+formula()+'</p><div id="widget-mount"></div><p>After</p>')
+        self.code_widget(editable=True)
+        self.page.locator('.cm-content').focus()
+        self.page.evaluate('''() => {
+          const line = document.querySelectorAll('.cm-line')[1].firstChild;
+          const r = document.createRange(); r.setStartBefore(document.querySelector('#start .katex'));
+          r.setEnd(line, 9); getSelection().removeAllRanges(); getSelection().addRange(r);
+        }''')
+        self.page.keyboard.press('Control+c')
+        self.assertEqual(self.clipboard(), '$'+TEX+'$\n\n```python\nif x:\n    print\n```')
+
+    def test_18_plain_code_widget_keeps_native_reply_copy(self):
+        self.fixture('<p>Before</p><div id="widget-mount"></div><p>After</p>')
+        self.code_widget(editable=True)
+        self.page.locator('#reply').click()
+        self.assertEqual(self.clipboard(), 'native')
+        self.assertEqual(self.page.evaluate('nativeClicks'), 1)
+
+    def test_19_widget_without_pre_wrapper_and_formula(self):
+        self.fixture('<p>Before</p><div id="widget-mount"></div><p>After '+formula()+'</p>')
+        self.code_widget(editable=True, wrapped=False)
+        self.both_paths('Before\n\n```python\nif x:\n    print(x)\n\n    return x\n```\n\nAfter $'+TEX+'$')
+
+    def test_20_virtualized_editor_reads_the_complete_model(self):
+        self.fixture('<p>Before</p><div id="widget-mount"></div><p>After '+formula()+'</p>')
+        self.code_widget(editable=True, code='visible')
+        code = 'visible\n    hidden line\n\nlast line'
+        self.page.evaluate('''code => {
+          const source = document.querySelector('.cm-content');
+          const gap = document.createElement('div'); gap.className = 'cm-gap'; source.append(gap);
+          source.cmTile = {root: {view: {contentDOM: source, state: {doc: {toString: () => code}},
+            posAtDOM: (node, offset) => offset}}};
+        }''', code)
+        self.both_paths('Before\n\n```python\n'+code+'\n```\n\nAfter $'+TEX+'$')
+
+    def test_21_unreadable_virtualized_code_uses_native_reply_and_warns_for_export(self):
+        self.fixture('<p>Before</p><div id="widget-mount"></div><p>After '+formula()+'</p>', legacy=True)
+        self.code_widget(editable=True, code='visible')
+        self.page.evaluate('''() => {
+          const gap = document.createElement('div'); gap.className = 'cm-gap';
+          document.querySelector('.cm-content').append(gap);
+        }''')
+        self.select()
+        self.assertIsNone(self.page.evaluate('OmniGPTClipboard.selectionPayload(getSelection())'))
+        self.page.locator('#reply').click()
+        self.assertEqual(self.clipboard(), 'native')
+        result = self.page.evaluate('ChatGPTExporter.collectConversation(document)')
+        self.assertIn('could not be fully read', result['warnings'][-1])
+        self.assertIn('[Code block could not be fully read', result['messages'][0]['markdown'])
+
+    def test_22_backticks_inside_code_do_not_end_the_fence(self):
+        self.fixture('<div id="widget-mount"></div><p>'+formula()+'</p>')
+        self.code_widget(code='s = "```"\n    keep_spaces = True')
+        self.both_paths('````python\ns = "```"\n    keep_spaces = True\n````\n\n$'+TEX+'$')
+
+    def test_23_current_copy_response_accessible_name(self):
+        self.fixture('<p>'+formula()+'</p>')
+        self.page.locator('#reply').evaluate('(node) => node.setAttribute("aria-label", "复制回复")')
+        self.both_paths('$'+TEX+'$')
+
+    def test_24_virtualized_partial_selection_uses_document_positions(self):
+        self.fixture('<p id="start">'+formula()+'</p><div id="widget-mount"></div>')
+        self.code_widget(editable=True, code='visible')
+        self.page.evaluate('''() => {
+          const source = document.querySelector('.cm-content');
+          const gap = document.createElement('div'); gap.className = 'cm-gap'; source.append(gap);
+          source.cmTile = {root: {view: {contentDOM: source, state: {doc: {toString: () => 'visible\\nhidden'}},
+            posAtDOM: (node, offset) => offset}}};
+          const range = document.createRange(); range.setStartBefore(document.querySelector('#start .katex'));
+          range.setEnd(document.querySelector('.cm-line').firstChild, 3);
+          getSelection().removeAllRanges(); getSelection().addRange(range);
+        }''')
+        self.page.keyboard.press('Control+c')
+        self.assertEqual(self.clipboard(), '$'+TEX+'$\n\n```python\nvis\n```')
+
+    def test_25_unselected_gap_does_not_disable_a_partial_copy(self):
+        self.fixture('<p id="start">'+formula()+'</p><div id="widget-mount"></div>')
+        self.code_widget(editable=True, code='visible')
+        self.page.evaluate('''() => {
+          const gap = document.createElement('div'); gap.className = 'cm-gap';
+          document.querySelector('.cm-content').append(gap);
+          const range = document.createRange(); range.setStartBefore(document.querySelector('#start .katex'));
+          range.setEnd(document.querySelector('.cm-line').firstChild, 3);
+          getSelection().removeAllRanges(); getSelection().addRange(range);
+        }''')
+        self.page.keyboard.press('Control+c')
+        self.assertEqual(self.clipboard(), '$'+TEX+'$\n\n```python\nvis\n```')
+
+    def test_26_copying_only_inside_the_editor_remains_native(self):
+        self.fixture('<div id="widget-mount"></div><p>'+formula()+'</p>')
+        self.code_widget(editable=True)
+        self.page.locator('.cm-content').focus()
+        self.page.evaluate('''() => {
+          window.editorCopyEvents = 0; document.addEventListener('copy', () => editorCopyEvents++);
+          const text = document.querySelector('.cm-line').firstChild;
+          const range = document.createRange(); range.selectNodeContents(text);
+          getSelection().removeAllRanges(); getSelection().addRange(range);
+        }''')
+        self.page.keyboard.press('Control+c')
+        self.assertEqual(self.clipboard(), 'if x:')
+        self.assertEqual(self.page.evaluate('editorCopyEvents'), 1)
+
+    def test_27_mouse_drag_across_code_and_formula(self):
+        self.fixture('<p id="start">Before</p><div id="widget-mount"></div>'
+                     '<p id="end">After '+formula()+' done.</p>')
+        self.code_widget(editable=True)
+        self.page.locator('.select-none').evaluate('(node) => node.style.userSelect = "none"')
+        points = self.page.evaluate('''() => {
+          const start = document.querySelector('#start').firstChild;
+          const end = document.querySelector('#end').lastChild;
+          const r = document.createRange(); r.setStart(start, 0); r.setEnd(start, 1);
+          const a = r.getBoundingClientRect(); r.setStart(end, end.length-1); r.setEnd(end, end.length);
+          const b = r.getBoundingClientRect(); return {x1: a.left, y1: (a.top+a.bottom)/2,
+            x2: b.right, y2: (b.top+b.bottom)/2};
+        }''')
+        self.page.mouse.move(points['x1'], points['y1'])
+        self.page.mouse.down()
+        self.page.mouse.move(points['x2'], points['y2'], steps=20)
+        self.page.mouse.up()
+        self.page.keyboard.press('Control+c')
+        self.assertEqual(self.clipboard(), 'Before\n\n```python\nif x:\n    print(x)\n\n    return x\n```\n\nAfter $'+TEX+'$ done.')
+
+    def test_28_incomplete_widget_does_not_hide_later_code_in_export(self):
+        self.fixture('<p>Before</p><div id="widget-mount"></div><p>Middle</p>'
+                     '<div id="widget-mount"></div><p>After '+formula()+'</p>', legacy=True)
+        self.code_widget(editable=True, code='visible')
+        self.page.evaluate('''() => {
+          const gap = document.createElement('div'); gap.className = 'cm-gap';
+          document.querySelector('.cm-content').append(gap);
+        }''')
+        self.code_widget(code='x = 2')
+        result = self.page.evaluate('ChatGPTExporter.collectConversation(document)')
+        text = result['messages'][0]['markdown']
+        self.assertEqual(text.count('[Code block could not be fully read'), 1)
+        self.assertIn('```python\nx = 2\n```', text)
+        self.assertIn('could not be fully read', result['warnings'][-1])
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

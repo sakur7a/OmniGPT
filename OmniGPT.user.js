@@ -2,7 +2,7 @@
 // @name         OmniGPT - ChatGPT Export & LaTeX Copy
 // @name:zh-CN   OmniGPT - ChatGPT 对话导出与 LaTeX 复制
 // @namespace    https://github.com/sakur7a/OmniGPT
-// @version      0.3.6
+// @version      0.3.7
 // @description  Export conversations and copy LaTeX as portable plain-text Markdown. Optional quote compatibility.
 // @description:zh-CN 导出对话，复制为保留 LaTeX 的纯文本 Markdown；可选引用兼容。
 // @author       OmniGPT contributors
@@ -18,7 +18,7 @@
 // @grant        none
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.3.6";
+globalThis.OmniGPTVersion = "0.3.7";
 
 (function initClipboard(global) {
   "use strict";
@@ -204,8 +204,16 @@ globalThis.OmniGPTVersion = "0.3.6";
     if (!range || range.collapsed) return false;
     const start = elementOf(range.startContainer);
     const end = elementOf(range.endContainer);
-    return Boolean(start?.closest(MESSAGE) && end?.closest(MESSAGE) &&
-      !start.closest(EDITABLE + ", #omnigpt-root, nav, aside") && !end.closest(EDITABLE + ", #omnigpt-root, nav, aside"));
+    const allowed = (element) => {
+      if (!element?.closest(MESSAGE) || element.closest("#omnigpt-root, nav, aside")) return false;
+      const editable = element.closest(EDITABLE);
+      return !editable || isCodeEditorContent(editable);
+    };
+    return allowed(start) && allowed(end);
+  }
+
+  function isCodeEditorContent(element) {
+    return Boolean(element?.matches(".cm-content") && element.closest(".cm-editor, #code-block-viewer"));
   }
 
   function escapeProse(text) {
@@ -228,6 +236,7 @@ globalThis.OmniGPTVersion = "0.3.6";
     let mathCount = 0;
     let visitedNodes = 0;
     let codeDepth = 0;
+    let incomplete = false;
     const listPositions = new WeakMap();
     const rawText = (node) => {
       const text = node.nodeValue || "";
@@ -237,6 +246,7 @@ globalThis.OmniGPTVersion = "0.3.6";
     };
     const intersects = (node) => { try { return range.intersectsNode(node); } catch (_) { return false; } };
     const clean = (text) => text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    const longestTicks = (text) => (text.match(/`+/g) || []).reduce((longest, run) => Math.max(longest, run.length), 0);
     const children = (node) => {
       let first = node.firstChild;
       let lastExclusive = null;
@@ -255,6 +265,55 @@ globalThis.OmniGPTVersion = "0.3.6";
       let result = "";
       for (let child = first; child && child !== lastExclusive; child = child.nextSibling) result += render(child);
       return result;
+    };
+    const headerText = (node) => {
+      if (node.nodeType === 3) return node.nodeValue || "";
+      if (node.nodeType !== 1 || node.matches(SKIP)) return "";
+      return Array.from(node.childNodes, headerText).join("");
+    };
+    const languageOf = (owner, source) => {
+      const classes = `${owner.className || ""} ${source.className || ""} ${source.querySelector("code")?.className || ""}`;
+      const explicit = classes.match(/\blanguage-([\w#+.-]+)/)?.[1] || source.getAttribute("data-language") || owner.getAttribute("data-language");
+      if (explicit && /^[\w#+.-]+$/.test(explicit)) return explicit.toLowerCase();
+      const header = owner.querySelector(".select-none");
+      const label = header ? headerText(header).trim() : "";
+      return /^[a-z0-9_#+.-]+$/i.test(label) ? label.toLowerCase() : "";
+    };
+    const codeMirrorText = (source) => {
+      // CodeMirror virtualizes long documents. Its DOM may contain only the viewport.
+      // Read the attached view when available; never silently serialize a viewport gap.
+      const view = source.cmTile?.root?.view || source.cmView?.rootView?.view || source.cmView?.view || source.cmView;
+      if (view?.contentDOM === source && view.state?.doc && typeof view.posAtDOM === "function") {
+        try {
+          const text = view.state.doc.toString();
+          const start = source.contains(range.startContainer) ? view.posAtDOM(range.startContainer, range.startOffset) : 0;
+          const end = source.contains(range.endContainer) ? view.posAtDOM(range.endContainer, range.endOffset) : text.length;
+          return text.slice(start, end);
+        } catch (_) { return null; }
+      }
+      if ([...source.querySelectorAll(".cm-gap")].some(intersects)) return null;
+      codeDepth += 1;
+      const lines = [...source.children].filter((child) => child.matches(".cm-line") && intersects(child));
+      const text = lines.length ? lines.map((line) => children(line)).join("\n") : children(source);
+      codeDepth -= 1;
+      return text;
+    };
+    const renderCodeMirror = (owner, source) => {
+      if (!intersects(source)) return "";
+      const content = codeMirrorText(source);
+      if (content === null) {
+        incomplete = true;
+        return "\n\n[Code block could not be fully read from this page.]\n\n";
+      }
+      const fence = "`".repeat(Math.max(3, longestTicks(content) + 1));
+      return `\n\n${protect(`${fence}${languageOf(owner, source)}\n${content.replace(/\n$/, "")}\n${fence}`)}\n\n`;
+    };
+    const codeWidgetOwner = (editor) => {
+      for (let owner = editor.parentElement; owner && !owner.matches(MESSAGE); owner = owner.parentElement) {
+        const header = owner.querySelector(".select-none");
+        if (header && !header.contains(editor) && owner.querySelectorAll(".cm-editor .cm-content, #code-block-viewer .cm-content").length === 1) return owner;
+      }
+      return null;
     };
     const render = (node) => {
       if (!intersects(node)) return "";
@@ -286,13 +345,24 @@ globalThis.OmniGPTVersion = "0.3.6";
         const src = node.getAttribute("src") || "";
         return /^(?:https?:\/\/|\/)/i.test(src) ? `![${alt}](${src.replace(/[()\s]/g, encodeURIComponent)})` : `[image: ${alt}]`;
       }
+      if (!codeDepth && tag === "PRE") {
+        const source = node.querySelector(".cm-editor .cm-content, #code-block-viewer .cm-content");
+        if (source) return renderCodeMirror(node, source);
+      }
+      if (!codeDepth && node.matches(".select-none") && !node.closest("pre")) {
+        const editor = node.parentElement?.querySelector(".cm-editor, #code-block-viewer");
+        if (editor && codeWidgetOwner(editor) === node.parentElement) return "";
+      }
+      if (!codeDepth && node.matches(".cm-editor, #code-block-viewer") && !node.closest("pre")) {
+        const source = node.querySelector(".cm-content");
+        if (source) return renderCodeMirror(codeWidgetOwner(node) || node, source);
+      }
       if (tag === "PRE" || tag === "CODE") {
         if (codeDepth) return children(node);
         codeDepth += 1;
         const content = children(node);
         codeDepth -= 1;
-        const longest = Math.max(0, ...(content.match(/`+/g) || []).map((run) => run.length));
-        const fence = "`".repeat(Math.max(tag === "PRE" ? 3 : 1, longest + 1));
+        const fence = "`".repeat(Math.max(tag === "PRE" ? 3 : 1, longestTicks(content) + 1));
         const language = `${node.className || ""} ${node.querySelector("code")?.className || ""}`.match(/\blanguage-([\w#+-]+)/)?.[1] || "";
         return tag === "PRE" ? `\n\n${protect(`${fence}${language}\n${content.replace(/\n$/, "")}\n${fence}`)}\n\n` : protect(`${fence}${/^`|`$|^ | $/.test(content) ? " " : ""}${content}${/^`|`$|^ | $/.test(content) ? " " : ""}${fence}`);
       }
@@ -344,7 +414,7 @@ globalThis.OmniGPTVersion = "0.3.6";
         ? before.replace(/(?:[-+*]|\d+\.) $/, (marker) => " ".repeat(marker.length)) : "";
       return tokens[Number(index)].replace(/\n/g, `\n${indent}`);
     });
-    return { text, mathCount, visitedNodes };
+    return { text, mathCount, visitedNodes, incomplete };
   }
 
   // Export reuses the same renderer without mutating the user's live selection or cloning a turn.
@@ -361,7 +431,7 @@ globalThis.OmniGPTVersion = "0.3.6";
     let visitedNodes = 0;
     for (let i = 0; i < selection.rangeCount; i += 1) {
       const part = serializeRange(selection.getRangeAt(i));
-      if (!part) return null;
+      if (!part || part.incomplete) return null;
       parts.push(part.text);
       mathCount += part.mathCount;
       visitedNodes += part.visitedNodes;
@@ -370,7 +440,8 @@ globalThis.OmniGPTVersion = "0.3.6";
   }
 
   function handleCopy(event) {
-    if (copyFallbackActive || !event.clipboardData || elementOf(event.target)?.closest(EDITABLE)) return;
+    const editable = elementOf(event.target)?.closest(EDITABLE);
+    if (copyFallbackActive || !event.clipboardData || (editable && !isCodeEditorContent(editable))) return;
     try {
       const payload = selectionPayload(global.getSelection());
       const text = payload?.mathCount ? payload.text : "";
@@ -392,7 +463,7 @@ globalThis.OmniGPTVersion = "0.3.6";
         button.closest("#omnigpt-root, pre, code, [data-user-message-bubble]")) return;
     const legacy = button.matches('[data-testid="copy-turn-action-button"]');
     const current = button.closest(".turn-action-controls") &&
-      /^(?:copy|复制|複製)$/i.test((button.getAttribute("aria-label") || "").trim());
+      /^(?:copy(?: response)?|复制(?:回复)?|複製(?:回覆)?)$/i.test((button.getAttribute("aria-label") || "").trim());
     if (!legacy && !current) return;
     const turn = button.closest('[data-testid^="conversation-turn-"], section[data-turn], [data-talvt-turn-state]');
     if (!turn) return;
@@ -406,7 +477,7 @@ globalThis.OmniGPTVersion = "0.3.6";
     // Read only assistant bodies, once each; never serialize the whole interaction.
     blocks = blocks.filter((node) => !blocks.some((other) => other !== node && other.contains(node)));
     const parts = blocks.map((node) => serializeElement(node, { mathStyle }));
-    if (!parts.length || parts.some((part) => !part) || !parts.some((part) => part.mathCount)) return;
+    if (!parts.length || parts.some((part) => !part || part.incomplete) || !parts.some((part) => part.mathCount)) return;
     const text = parts.map((part) => part.text).filter(Boolean).join("\n\n");
     if (!text) return;
 
@@ -462,7 +533,7 @@ globalThis.OmniGPTVersion = "0.3.6";
           return value?.mathCount ? value.text : native.call(this);
         } : function omniGPTRangeToString() {
           const value = serializeRange(this);
-          return value?.mathCount ? value.text : native.call(this);
+          return value?.mathCount && !value.incomplete ? value.text : native.call(this);
         };
         const safeWrapper = function () {
           try { return wrapper.call(this); } catch (_) { return native.call(this); }
@@ -870,6 +941,7 @@ globalThis.OmniGPTVersion = "0.3.6";
     const nodes = [...new Set(Array.from(root.querySelectorAll(TURN), canonical))];
     const selected = new Set(nodes);
     const messages = [];
+    let incompleteCode = false;
     for (const node of nodes) {
       if (node.closest(EXCLUDE)) continue;
       let nested = false;
@@ -883,10 +955,12 @@ globalThis.OmniGPTVersion = "0.3.6";
       if (!["user", "assistant"].includes(role)) continue;
       const rendered = global.OmniGPTClipboard.serializeElement(node, { mathStyle: "markdown" });
       if (!rendered?.text?.trim()) continue;
+      incompleteCode ||= rendered.incomplete;
       messages.push({ index: messages.length + 1, role, text: rendered.text, markdown: rendered.text });
     }
     return { schemaVersion: 1, title: getConversationTitle(doc), url: global.location?.href || "", exportedAt: new Date().toISOString(),
-      acquisition: "dom", partial: true, warnings: [DOM_WARNING, ASSET_WARNING], messageCount: messages.length, messages };
+      acquisition: "dom", partial: true, warnings: [DOM_WARNING, ASSET_WARNING,
+        ...(incompleteCode ? ["Some code blocks could not be fully read from the page."] : [])], messageCount: messages.length, messages };
   }
 
   async function collectCurrentConversation(doc = global.document, options = {}) {
